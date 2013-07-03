@@ -13,14 +13,17 @@ and predictor data (see above).
 
 Sample GLOBAL INI file
 --------
+<pre>
 [GRIDS]
 geology = /Users/user/data/geology.flt
 slopemin = /Users/user/data/slopemin.flt
 slopemax = /Users/user/data/slopemax.flt
 cti = /Users/user/data/cti.grd
+</pre>
 
 Sample event-specific INI file
 --------
+<pre>
 [COVERAGE]
 coverage = /Users/user/events/event1/coverage.shp
 
@@ -37,6 +40,7 @@ geology_event = rock_type #name of the shapefile attribute to rasterize
 
 [OUTPUT]
 name = event1
+</pre>
 
 Dummy Examples
 --------
