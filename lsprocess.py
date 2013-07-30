@@ -6,13 +6,15 @@ import os.path
 import ConfigParser
 import sys
 import copy
+import warnings
 
 #third party imports
 import numpy as np
 from pyproj import Proj
 from pagerio import shake
-from pagerio import gmt,shapefile
+from pagerio import gmt,shapefile,esri
 from shapely import geometry
+from pagerutil import text
 
 #set default grid resolution here - later add it to config files
 DEFAULT_RES = 0.0083 #decimal degrees
@@ -55,10 +57,70 @@ def createGrids(global_grids,covshp,predictors,outfolder,ename,resolution=DEFAUL
     if xmin >= xmax or ymin >= ymax:
         raise Exception,'Your data sets do not overlap!'
 
-    #geodict = makeReference
-    #make a grid from the shapefile data at the resolution specified - no clipping yet
+    #make a reference geodict (clip everything else to this)
+    ncols = int(round((xmax-xmin)/resolution))
+    nrows = int(round((ymax-ymin)/resolution))
+    #we need to ensure that the resulting grid is still equal to or inside the bounds
+    #we just calculated.
+    txmax = xmin + ncols*resolution
+    while txmax > xmax:
+        ncols -= 1
+        txmax = xmin + ncols*resolution
+
+    tymax = ymin + nrows*resolution
+    while tymax > ymax:
+        nrows -= 1
+        tymax = ymin + nrows*resolution
+        
+    geodict = {'xmin':xmin,'xmax':xmax,'ymin':ymin,'ymax':ymax,
+               'xdim':resolution,'ydim':resolution,
+               'nrows':nrows,'ncols':ncols}    
+
+    #create the output directory
+    if not os.path.isdir(outfolder):
+        os.makedirs(outfolder)
+    
+    #make a GMT grid from the shapefile data at the resolution specified - no clipping yet
     covgrid,ispoint = makeCoverageGrid(shpobj,resolution)
-    covgrid2 = gmt.GMTGrid()
+    covgrid.interpolateToGrid(geodict,method='nearest')
+    covname = os.path.join(outfolder,'coverage.grd')
+    print 'Saving coverage grid...'
+    covgrid.save(covname)
+    
+
+    #clip out all of the global grids
+    for gridkey,gridfilename in global_grids.iteritems():
+        bounds = (xmin-(resolution*2),xmax+(resolution*2),ymin-(resolution*2),ymax+(resolution*2))
+        if gridfilename.endswith('grd'):
+            grid = gmt.GMTGrid(grdfile=gridfilename,bounds=bounds)
+        else:
+            #make sure we get a larger area than desired, so we can resample
+            tmpgrid = esri.EsriGrid(gridfilename)
+            tmpgrid.load(bounds=bounds)
+            grid = gmt.GMTGrid()
+            grid.loadFromGrid(tmpgrid)
+        grid.interpolateToGrid(geodict)
+        print 'Saving grid %s...' % gridkey
+        grid.save(os.path.join(outfolder,gridkey+'.grd'))
+        
+    #Now save out the desired ShakeMap layers
+    for predictor_name,predictorvalue in predictors.iteritems():
+        predictorfile,predictoratts = predictorvalue
+        #what kind of a file are you?
+        #We'll support more file types later, for now just handle shakemaps
+        if not predictorfile.endswith('.xml'):
+            f,e = os.path.splitext(predictorfile)
+            raise Exception,'Unsupported file type for predictor: %s' % e
+
+        for variable in predictoratts:
+            shakemap = shake.ShakeGrid(predictorfile,variable=variable.upper())
+            shakemap.interpolateToGrid(geodict)
+            gmtgrid = gmt.GMTGrid()
+            gmtgrid.geodict = shakemap.geodict.copy()
+            gmtgrid.griddata = shakemap.griddata.copy()
+            print 'Saving grid %s...' % variable
+            gmtgrid.save(os.path.join(outfolder,variable+'.grd'))
+    
     return eventfolder
 
 def makeCoverageGrid(covshp,resolution):
@@ -81,8 +143,9 @@ def makePolygonGrid(covshp,resolution):
     utmzone = getBestUTM(xmin + (xmax-xmin)/2.0)
     utmproj = Proj(proj='utm',zone=utmzone,ellps='WGS84')
     shpcounter = 0
+    progress_unit = text.roundToNearest(covshp.nShapes/10,1000)
     for shape in covshp.getShapes():
-        if not shpcounter % 1000:
+        if not shpcounter % progress_unit:
             print 'Processing shape %i of %i' % (shpcounter,covshp.nShapes)
         shapelon = shape['x']
         shapelat = shape['y']
@@ -323,10 +386,12 @@ def main(parser,args):
         gridattrs = ','.join(value[1])
         print '\t%s = %s (%s)' % (key,gridfile,gridattrs)
     print 'Your output will be written to:'
-    print '\t%s' % os.path.join(outfolder,ename)
-    eventfolder = createGrids(global_grids,covshp,predictors,outfolder,ename)
+    eventfolder = os.path.join(outfolder,ename)
+    print '\t%s' % eventfolder
+    eventfolder = createGrids(global_grids,covshp,predictors,eventfolder,ename)
     
 if __name__ == '__main__':
+    #warnings.filterwarnings("ignore", "*matplotlib*")
     parser = argparse.ArgumentParser()
     parser.add_argument("eventfile", type=str,nargs='?',
                         help="A config file specifying event-specific input")
