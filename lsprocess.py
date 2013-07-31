@@ -86,7 +86,15 @@ def createGrids(global_grids,covshp,predictors,outfolder,ename,resolution=DEFAUL
     covname = os.path.join(outfolder,'coverage.grd')
     print 'Saving coverage grid...'
     covgrid.save(covname)
-    
+
+    #create a boolean coverage grid if our coverage shapefile is a polygon
+    if not ispoint:
+        boolgrid = gmt.GMTGrid()
+        boolgrid.loadFromGrid(covgrid)
+        boolgrid.griddata[boolgrid.griddata.nonzero()] = 1
+        boolname = os.path.join(outfolder,'boolcoverage.grd')
+        print 'Saving boolean coverage grid...'
+        covgrid.save(boolname)
 
     #clip out all of the global grids
     for gridkey,gridfilename in global_grids.iteritems():
@@ -127,7 +135,7 @@ def makeCoverageGrid(covshp,resolution):
     ispoint = False
     if covshp.shapeType == 'polygon':
         covgrid = makePolygonGrid(covshp,resolution)
-    elif covshp.shapeType == 'polygon':
+    elif covshp.shapeType == 'point':
         covgrid = makePointGrid(covshp,resolution)
         ispoint = True
     return (covgrid,ispoint)
