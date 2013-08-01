@@ -30,7 +30,9 @@ def main(args):
     writer.save(fpath)
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
+    desc = """Convert a GMT-style .xy file of points into a Shapefile.
+    """
+    parser = argparse.ArgumentParser(description=desc)
     parser.add_argument("xyfile", type=str,
                         help="A GMT-style xy file")
     parser.add_argument("-s", "--skip-first-line", dest='skipFirstLine',
