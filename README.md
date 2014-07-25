@@ -113,40 +113,13 @@ geology_event = rock_type #name of the shapefile attribute to rasterize
 name = event1
 </pre>
 
-Installation and Dependencies
------------------------------
-
-The easiest way to handle dependencies is to use either the Enthought Canopy distribution or
-the Continuum Anaconda distribution.  In either case, you will want to install the following (possibly)
-extra packages:
-pyproj
-Basemap
-
-These should be installable through the mechanisms provided by those distributions.
-
 Usage
 --------
 
-usage: lsprocess.py [-h] [-c] [-v] [eventfile]
+usage: lsprocess.py [-h] [eventfile]
 
 positional arguments:
-  eventfile        A config file specifying event-specific input
+  eventfile   A config file specifying event-specific input
 
 optional arguments:
-  -h, --help       show this help message and exit
-  -c, --configure  Create global config file
-  -v, --verbose    increase output verbosity
-
-
-usage: xy2shp.py [-h] [-s] xyfile
-
-Convert a GMT-style .xy file of points into a Shapefile.
-
-positional arguments:
-  xyfile                A GMT-style xy file
-
-optional arguments:
-  -h, --help            show this help message and exit
-  -s, --skip-first-line
-                        Skip first line
-
+  -h, --help  show this help message and exit
