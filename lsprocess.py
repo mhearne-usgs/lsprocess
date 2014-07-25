@@ -1,291 +1,69 @@
 #!/usr/bin/env python
 
-#stdlib imports
-import argparse
-import os.path
-import ConfigParser
+#stdlib import
 import sys
-import copy
-import warnings
+import os.path
+import argparse
+import ConfigParser
 
-#third party imports
+#third party
+import geopandas as gpd
 import numpy as np
-from pyproj import Proj
-from pagerio import shake
-from pagerio import gmt,shapefile,esri
-from shapely import geometry
-from pagerutil import text
+import fiona
+import fiona.crs as crs
+from neicio.shake import ShakeGrid
+from neicio.esri import EsriGrid
+from neicio.gmt import GMTGrid
+from neicutil.matutil import repmat
+import rasterio
+from affine import Affine
+from rasterio import features
 
-#set default grid resolution here - later add it to config files
-DEFAULT_RES = 0.0083 #decimal degrees
-    
-def createGrids(global_grids,covshp,predictors,outfolder,ename,resolution=DEFAULT_RES):
-    eventfolder = os.path.join(outfolder,ename)
-    #figure out the minimum bounding box of the coverage data set
-    shpobj = shapefile.PagerShapeFile(covshp)
-    if not shpobj.hasIndex:
-        shpobj.createShapeIndex()
-    covbox = shpobj.bounds
-    allbounds = [covbox]
-    #figure out the minimum bounding box of the predictor grids
-    for predictor_name,predictorvalue in predictors.iteritems():
-        predictorfile,predictoratts = predictorvalue
-        #what kind of a file are you?
-        #We'll support more file types later, for now just handle shakemaps
-        if not predictorfile.endswith('.xml'):
-            f,e = os.path.splitext(predictorfile)
-            raise Exception,'Unsupported file type for predictor: %s' % e
-        
-        shakemap = shake.ShakeGrid(predictorfile,variable=predictoratts[0].upper())
-        shakebox = shakemap.getRange()
-        allbounds.append(shakebox)
-    xmin = -9999999999
-    xmax = 9999999999
-    ymin = xmin
-    ymax = xmax
-    for bounds in allbounds:
-        txmin,txmax,tymin,tymax = bounds
-        if txmin > xmin:
-            xmin = txmin
-        if txmax < xmax:
-            xmax = txmax
-        if tymin > ymin:
-            ymin = tymin
-        if tymax < ymax:
-            ymax = tymax
-    
-    if xmin >= xmax or ymin >= ymax:
-        raise Exception,'Your data sets do not overlap!'
+def sampleGrid(gridfile,geodict):
+    xmin = geodict['xmin']
+    xmax = geodict['xmax']
+    ymin = geodict['ymin']
+    ymax = geodict['ymax']
+    resolution = geodict['xdim']
+    bounds = (xmin-(resolution*2),xmax+(resolution*2),ymin-(resolution*2),ymax+(resolution*2))
+    if gridfile.endswith('grd'):
+        grid = GMTGrid(grdfile=gridfile,bounds=bounds)
+    else:
+        tmpgrid = EsriGrid(gridfile)
+        tmpgrid.load(bounds=bounds)
+        grid = GMTGrid()
+        grid.loadFromGrid(tmpgrid)
+    grid.interpolateToGrid(geodict)
+    return grid
 
-    #make a reference geodict (clip everything else to this)
-    ncols = int(round((xmax-xmin)/resolution))
-    nrows = int(round((ymax-ymin)/resolution))
-    #we need to ensure that the resulting grid is still equal to or inside the bounds
-    #we just calculated.
-    txmax = xmin + ncols*resolution
-    while txmax > xmax:
-        ncols -= 1
-        txmax = xmin + ncols*resolution
+def getShape(bbox,resolution):
+    xmin = bbox[0]
+    ymax = bbox[3]
+    xmax = bbox[1]
+    ymin = bbox[2]
+    ncols = int(np.ceil((xmax-xmin)/resolution))
+    nrows = int(np.ceil((ymax-ymin)/resolution))
+    xmax = xmin + ncols*resolution
+    ymin = ymax - nrows*resolution
+    outbbox = [xmin,xmax,ymin,ymax]
+    return (nrows,ncols,outbbox)
 
-    tymax = ymin + nrows*resolution
-    while tymax > ymax:
-        nrows -= 1
-        tymax = ymin + nrows*resolution
-        
-    geodict = {'xmin':xmin,'xmax':xmax,'ymin':ymin,'ymax':ymax,
-               'xdim':resolution,'ydim':resolution,
-               'nrows':nrows,'ncols':ncols}    
-
-    #create the output directory
-    if not os.path.isdir(outfolder):
-        os.makedirs(outfolder)
-    
-    #make a GMT grid from the shapefile data at the resolution specified - no clipping yet
-    covgrid,ispoint = makeCoverageGrid(shpobj,resolution)
-    covgrid.interpolateToGrid(geodict,method='nearest')
-    covname = os.path.join(outfolder,'coverage.grd')
-    print 'Saving coverage grid...'
-    covgrid.save(covname)
-
-    #create a boolean coverage grid if our coverage shapefile is a polygon
-    if not ispoint:
-        boolgrid = gmt.GMTGrid()
-        boolgrid.loadFromGrid(covgrid)
-        boolgrid.griddata[boolgrid.griddata.nonzero()] = 1
-        boolname = os.path.join(outfolder,'boolcoverage.grd')
-        print 'Saving boolean coverage grid...'
-        covgrid.save(boolname)
-
-    #clip out all of the global grids
-    for gridkey,gridfilename in global_grids.iteritems():
-        bounds = (xmin-(resolution*2),xmax+(resolution*2),ymin-(resolution*2),ymax+(resolution*2))
-        if gridfilename.endswith('grd'):
-            grid = gmt.GMTGrid(grdfile=gridfilename,bounds=bounds)
-        else:
-            #make sure we get a larger area than desired, so we can resample
-            tmpgrid = esri.EsriGrid(gridfilename)
-            tmpgrid.load(bounds=bounds)
-            grid = gmt.GMTGrid()
-            grid.loadFromGrid(tmpgrid)
-        grid.interpolateToGrid(geodict)
-        print 'Saving grid %s...' % gridkey
-        grid.save(os.path.join(outfolder,gridkey+'.grd'))
-        
-    #Now save out the desired ShakeMap layers
-    for predictor_name,predictorvalue in predictors.iteritems():
-        predictorfile,predictoratts = predictorvalue
-        #what kind of a file are you?
-        #We'll support more file types later, for now just handle shakemaps
-        if not predictorfile.endswith('.xml'):
-            f,e = os.path.splitext(predictorfile)
-            raise Exception,'Unsupported file type for predictor: %s' % e
-
-        for variable in predictoratts:
-            shakemap = shake.ShakeGrid(predictorfile,variable=variable.upper())
-            shakemap.interpolateToGrid(geodict)
-            gmtgrid = gmt.GMTGrid()
-            gmtgrid.geodict = shakemap.geodict.copy()
-            gmtgrid.griddata = shakemap.griddata.copy()
-            print 'Saving grid %s...' % variable
-            gmtgrid.save(os.path.join(outfolder,variable+'.grd'))
-    
-    return eventfolder
-
-def makeCoverageGrid(covshp,resolution):
-    ispoint = False
-    if covshp.shapeType == 'polygon':
-        covgrid = makePolygonGrid(covshp,resolution)
-    elif covshp.shapeType == 'point':
-        covgrid = makePointGrid(covshp,resolution)
-        ispoint = True
-    return (covgrid,ispoint)
-
-def getBestUTM(cx):
-    starts = np.arange(-180,180,6)
-    zone = np.where((cx > starts) < 1)[0].min()
-    return zone
-
-def makePolygonGrid(covshp,resolution):
-    covgrid = makeEmptyGrid(covshp.bounds,resolution,np.double)
-    xmin,xmax,ymin,ymax = covshp.bounds
-    utmzone = getBestUTM(xmin + (xmax-xmin)/2.0)
-    utmproj = Proj(proj='utm',zone=utmzone,ellps='WGS84')
-    shpcounter = 0
-    progress_unit = text.roundToNearest(covshp.nShapes/10,1000)
-    for shape in covshp.getShapes():
-        if not shpcounter % progress_unit:
-            print 'Processing shape %i of %i' % (shpcounter,covshp.nShapes)
-        shapelon = shape['x']
-        shapelat = shape['y']
-        #sometimes these polygons are in pieces separated by nan values
-        #in this case, we need to create a multipolygon object
-        #do we have this kind of polygon?
-        #if so, let's loop over each piece and do the cell area calculations
-        if np.any(np.isnan(shapelat)):
-            inan = np.isnan(shapelat).nonzero()[0].tolist()
-            inan.append(len(shapelat))
-            startidx = 0
-            polylist = []
-            for nanidx in inan:
-                shapex,shapey = utmproj(shapelon[startidx:nanidx],shapelat[startidx:nanidx])
-                slidepoly = geometry.Polygon(zip(shapex,shapey))
-                countgrid(covgrid,shapelon,shapelat,slidepoly,resolution,utmproj)
-                startidx = nanidx + 1
-        #if not, just do calculations on simple polygon
-        else:
-            shapex,shapey = utmproj(shapelon,shapelat)
-            slidepoly = geometry.Polygon(zip(shapex,shapey))
-            countgrid(covgrid,shapelon,shapelat,slidepoly,resolution,utmproj)
-       
-        shpcounter += 1
+def makeCoverageGrid(covshp,geodict):
+    shapes = fiona.open(covshp)
+    geoms = []
+    for shape in shapes:
+        geoms.append(shape['geometry'])
+    shapes.close()
+    outshape = (geodict['nrows'],geodict['ncols'])
+    transform = Affine.from_gdal(geodict['xmin'],geodict['xdim'],0.0,geodict['ymax'],0.0,-geodict['ydim'])
+    img = features.rasterize(geoms,out_shape=outshape,fill=0,
+                                 transform=transform,all_touched=True,
+                                 default_value=1)
+    covgrid = GMTGrid()
+    covgrid.geodict = geodict
+    covgrid.griddata = img.copy()
     return covgrid
 
-def countgrid(covgrid,shapelon,shapelat,slidepoly,resolution,utmproj):
-    nrows,ncols = covgrid.griddata.shape
-    sxmin = min(shapelon)
-    sxmax = max(shapelon)
-    symin = min(shapelat)
-    symax = max(shapelat)
-    uly,ulx = covgrid.getRowCol(symax,sxmin)
-    lry,lrx = covgrid.getRowCol(symin,sxmax)
-    if uly < 1:
-        uly = 1
-    if ulx < 1:
-        ulx = 1
-    if lry > nrows:
-        lry = nrows
-    if lrx > ncols:
-        lrx = ncols
-    for i in range(uly,lry+1):
-        for j in range(ulx,lrx+1):
-            clat,clon = covgrid.getLatLon(i,j)
-            xmin = clon - resolution/2.0
-            xmax = clon + resolution/2.0
-            ymin = clat - resolution/2.0
-            ymax = clat + resolution/2.0
-            xcell = [xmin,xmin,xmax,xmax,xmin]
-            ycell = [ymin,ymax,ymax,ymin,ymin]
-            xcellutm,ycellutm = utmproj(xcell,ycell)
-            cellpoly = geometry.Polygon(zip(xcellutm,ycellutm))
-            try:
-                if not cellpoly.intersects(slidepoly):
-                    continue
-            except:
-                intpoly = cellpoly.intersection(slidepoly)
-            cellfraction = slidepoly.area/cellpoly.area
-            covgrid.griddata[i,j] += covgrid.griddata[i,j] + cellfraction
-
-# def makePolygonGrid(covshp,resolution):
-#     covgrid = makeEmptyGrid(covshp.bounds,resolution,np.double)
-#     nrows,ncols = covgrid.griddata.shape
-#     xmin,xmax,ymin,ymax = covshp.bounds
-#     utmzone = getBestUTM(xmin + (xmax-xmin)/2.0)
-#     utmproj = Proj(proj='utm',zone=utmzone,ellps='WGS84')
-#     #this might be *really* slow...
-#     for i in range(0,nrows):
-#         print 'Row %i of %i...' % (i,nrows)
-#         for j in range(0,ncols):
-#             cxmin = xmin + j*resolution
-#             cxmax = cxmin + resolution
-#             cymax = ymax - i*resolution
-#             cymin = cymax - resolution
-#             lonbox = [cxmin,cxmax,cxmax,cxmin,cxmin]
-#             latbox = [cymin,cymin,cymax,cymax,cymin]
-#             #get all shapes intersecting cell
-#             shapes = covshp.getShapesByBoundingBox((cxmin,cxmax,cymin,cymax))
-#             if not len(shapes):
-#                 continue
-#             #union these shapes and project
-#             unitedshape = projectUnitedShape(shapes,utmproj) #returns Shapely polygon
-#             xbox,ybox = utmproj(lonbox,latbox)
-#             cellshape = geometry.Polygon(zip(xbox,ybox))
-#             #we only want the part of the united polygons that is inside this cell
-#             unitedshape = unitedshape.intersection(cellshape)
-#             fraction = unitedshape.area/cellshape.area
-#             if fraction > 0:
-#                 pass
-#             covgrid.griddata[i,j] = fraction
-#     return covgrid
-            
-def projectUnitedShape(shapes,utmproj):
-    shape1lon = shapes[0]['x']
-    shape1lat = shapes[0]['y']
-    outx,outy = utmproj(shape1lon,shape1lat)
-    outpoly = geometry.Polygon(zip(outx,outy))
-    for i in range(1,len(shapes)):
-        loncomp = shapes[i]['x']
-        latcomp = shapes[i]['y']
-        xcomp,ycomp = utmproj(loncomp,latcomp)
-        polycomp = geometry.Polygon(zip(xcomp,ycomp))
-        outpoly = outpoly.union(polycomp)
-    return outpoly
-
-def makePointGrid(covshp,resolution):
-    covgrid = makeEmptyGrid(covshp.bounds,resolution,np.uint8)
-    for feature in covshp.getShapes():
-        x = feature['x']
-        y = feature['y']
-        row,col = covgrid.getRowCol(y,x)
-        covgrid.griddata[row,col] = 1
-    return covgrid
-
-def makeEmptyGrid(covbox,resolution,dtype):
-    covgrid = gmt.GMTGrid()
-    ulx = covbox[0]
-    uly = covbox[3]
-    lrx = covbox[1]
-    lry = covbox[2]
-    ncols = int(np.ceil((lrx-ulx)/resolution))
-    nrows = int(np.ceil((uly-lry)/resolution))
-    xmin = ulx
-    xmax = ulx + resolution*ncols
-    ymax = uly
-    ymin = uly - resolution*nrows
-    geodict = {'xmin':ulx,'xmax':xmax,'ymin':ymin,'ymax':ymax,'xdim':resolution,'ydim':resolution}
-    covgrid.geodict = geodict.copy()
-    covgrid.griddata = np.zeros((nrows,ncols),dtype=dtype)
-    return covgrid
-    
 def parseEvent(eventfile):
     reqsections = ['COVERAGE','PREDICTORS','ATTRIBUTES','OUTPUT']
     config = ConfigParser.RawConfigParser()
@@ -294,11 +72,35 @@ def parseEvent(eventfile):
     if not set(reqsections) <= set(sections): #is at least every required section present?
         raise Exception,'Incomplete config file - must have the following sections defined: %s' % str(reqoptions)
     missing = []
-    covshp = config.get('COVERAGE','coverage')
-    if not os.path.isfile(covshp):
-        missing.append(covshp)
+    covdict = {}
+    fname = config.get('COVERAGE','coverage')
+    covdict['filename'] = fname
+    covpath,covfile = os.path.split(fname)
+    covname,covext = os.path.splitext(covfile)
+    prjfile = os.path.join(covpath,covname,'.prj')
+    hasProjFile = os.path.isfile(prjfile)
+    hasProjStr = config.has_option('COVERAGE','projstr')
+    # if not hasProjFile and not hasProjStr:
+    #     raise Exception,'You must have a .prj file or a proj4 string set in config file.'
+    
+    # covdict['filename'] = fname
+    # if hasProjStr:
+    #     covdict['projstr'] = config.get('COVERAGE','projstr')
+    # else:
+    #     source = fiona.open(fname)
+    #     covdict['projstr'] = covdictcrs.to_string(source.crs)
+    #     source.close()
+
+    #get the format and bbox fields (if found)
+    if config.has_option('COVERAGE','format'):
+        covdict['format'] = config.get('COVERAGE','format')
+    if config.has_option('COVERAGE','bbox'):
+        covdict['bbox'] = [float(b) for b in config.get('COVERAGE','bbox').split()]
+        
     predictors = dict(config.items('PREDICTORS'))
     for pgrid in predictors.values():
+        if pgrid.find('_projstr') > -1 or pgrid.find('_format') > -1:
+            continue
         if not os.path.isfile(pgrid):
             missing.append(pgrid)
     #make sure that the attribute names match the predictor names
@@ -315,20 +117,7 @@ def parseEvent(eventfile):
     if 'name' not in config.options('OUTPUT'):
         raise Exception,'Missing "name" field in OUTPUT section'
     ename = config.get('OUTPUT','name')
-    return (covshp,predictors,ename)    
-
-def writeConfig(global_config,outfolder,configfile):
-    config = ConfigParser.RawConfigParser()
-    config.add_section('GRIDS')
-    for key,value in global_config.iter_items():
-        config.set('GRIDS',key,value)
-    config.add_section('OUTPUT')
-    config.set('OUTPUT','folder',outfolder)
-    p,f = os.path.split(configfile)
-    if not os.path.isdir(p):
-        os.makedirs(p)
-    with open(configfile, 'wb') as f:
-        config.write(f)
+    return (covdict,predictors,ename)    
 
 def readConfig(configfile):
     config = ConfigParser.RawConfigParser()
@@ -337,86 +126,143 @@ def readConfig(configfile):
     outfolder = config.get('OUTPUT','folder')
     return (global_grids,outfolder)
 
-def configure(configfile):
-    print 'You will now be prompted for the names and locations of the global grid files'
-    print 'on your system.  When you are done entering these, hit enter when prompted for the'
-    print 'name of the next grid.'
-    global_config = {}
-    while True:
-        key = raw_input('Enter name of global grid (i.e., geology): ')
-        if key.strip() == '':
-            break
-        value = raw_input('Enter path to global grid (i.e., /Users/user/geology.grd): ')
-        if value.strip() == '':
-            print "No grid path entered - let's try again"
-            continue
-        global_config[key] = value
-    outfolder = raw_input('Enter the folder where all output should be written: ')
-    writeConfig(global_config,outfolder,configfile)
-    print 'Your config file has been written to %s' % configfile
-
-def main(parser,args):
+def main(args):
+    #read in global config file
     configfile = os.path.join(os.path.expanduser('~'),'.lsprocess','lsprocess.cfg')
     hasconfig = os.path.isfile(configfile)
     if not hasconfig and not args.configure:
         print
-        print 'No config file "%s" found.  \nRun with configure option to create.' % configfile
+        print 'No config file "%s" found.' % configfile
         print
-        parser.print_help()
         sys.exit(1)
-    if args.configure:
-        if hasconfig:
-            prompt = '''You already have a config file at %s.  
-            Are you sure you want to re-configure? y/[n] ''' % configfile
-            ans = raw_input(prompt)
-            if ans.strip() == '' or ans.strip().lower() == 'n':
-                sys.exit(0)
-            configure(configfile)
-        
-    #read the global config
     global_grids,outfolder = readConfig(configfile) #returns a dictionary just like global_config above
-
-    #validate/parse the event cfg file
+    
+    
+    #read in event specific grid file
     try:
-        covshp,predictors,ename = parseEvent(args.eventfile)
+        covdict,predictors,ename = parseEvent(args.eventfile)
     except Exception,msg:
         print 'There is something wrong with your event file.  See errors below.'
         print msg
         sys.exit(1)
+    
+    #construct output folder from global/event configs
+    outfolder = os.path.join(outfolder,ename)
+    
+    #look for bounding box and resolution in event config file, or get from shakemap
+    bbox = None
+    shakemap = ShakeGrid(predictors['shakemap'][0],'MMI')
+    if covdict.has_key('bbox'):
+        bbox = covdict['bbox']
+    else:
+        #bbox = shakemap.getRange()
+        #default to the bounding box of the coverage data
+        with fiona.open(covdict['filename']) as src:
+            tbbox = src.bounds
+            bbox = (tbbox[0],tbbox[2],tbbox[1],tbbox[3])
+            
+    if covdict.has_key('resolution'):
+        resolution = covdict['resolution']
+    else:
+        resolution = shakemap.getGeoDict()['xdim']
+    
+    #get input coverage projection from event config OR from .prj file
+    #projstr = covdict['projstr']
+    
+    #get format of coverage, check against list of supported fiona formats, read in data
+    #we'll do other support later
+    
+    #if necessary, project coverage into lat/lon
+    #skip projection for now as well
 
-    print 'Your coverage data set: %s' % covshp
-    print 'Your global grids:'
-    for key,value in global_grids.iteritems():
-        print '\t%s = %s' % (key,value)
-    print 'Your non-global predictor variables:'
-    for key,value in predictors.iteritems():
-        gridfile = value[0]
-        gridattrs = ','.join(value[1])
-        print '\t%s = %s (%s)' % (key,gridfile,gridattrs)
-    print 'Your output will be written to:'
-    eventfolder = os.path.join(outfolder,ename)
-    print '\t%s' % eventfolder
-    eventfolder = createGrids(global_grids,covshp,predictors,eventfolder,ename)
+    #determine what the grid shape and (potentially) new bbox is given bbox and resolution
+    nrows,ncols,bbox = getShape(bbox,resolution)
+    geodict = {'xdim':resolution,'ydim':resolution,
+               'xmin':bbox[0],'xmax':bbox[1],
+               'ymin':bbox[2],'ymax':bbox[3],
+               'nrows':nrows,'ncols':ncols}
+    
+    #rasterize projected coverage defined bounding box and resolution
+    shpfile = covdict['filename']
+    print 'Creating coverage grid...'
+    covgrid = makeCoverageGrid(shpfile,geodict)
+    outgridfile = os.path.join(outfolder,'coverage.grd')
+    print 'Saving coverage to %s...' % outgridfile
+    covgrid.save(outgridfile)
+
+    #make a grid of lat,lon values
+    row = np.arange(0,nrows)
+    col = np.arange(0,ncols)
+    rows = repmat(row,ncols,1).T
+    cols = repmat(col,nrows,1)
+    lat,lon = covgrid.getLatLon(rows,cols)
+
+    #create a list of arrays that we'll dump out to a text file when done
+    vardict = {}
+    vardict['coverage'] = covgrid.griddata.flatten()
+    vardict['lat'] = lat.flatten()
+    vardict['lon'] = lon.flatten()
+        
+    #subset shakemap and global grids using defined bounding box and resolution
+    shakefile = predictors['shakemap'][0]
+    variables = predictors['shakemap'][1]
+    for var in variables:
+        shakemap = ShakeGrid(shakefile,var.upper())
+        shakemap.interpolateToGrid(geodict)
+        gmtshake = GMTGrid()
+        gmtshake.geodict = shakemap.geodict
+        gmtshake.griddata = shakemap.griddata
+        outshakefile = os.path.join(outfolder,'%s.grd' % var)
+        print 'Saving %s to %s...' % (var,outshakefile)
+        gmtshake.save(outshakefile)
+        vardict[var] = gmtshake.griddata.flatten()
+        
+    #write netcdf versions of coverage, shakemap, and global grids to output folder
+    for gridname,gridfile in global_grids.iteritems():
+        if not os.path.isfile(gridfile):
+            pass
+        grid = sampleGrid(gridfile,geodict)
+        outgridfile = os.path.join(outfolder,gridname+'.grd')
+        print 'Saving %s to %s...' % (gridname,outgridfile)
+        grid.save(outgridfile)
+        vardict[gridname] = grid.griddata.flatten()
+        
+    #create text file with columns of data for all predictor variables
+    firstcols = ['lat','lon','coverage']
+    outmat = np.zeros((nrows*ncols,len(vardict)))
+    for i in range(0,len(firstcols)):
+        col = firstcols[i]
+        outmat[:,i] = vardict[col]
+    colidx = i+1
+    colnames = []
+    for col,column in vardict.iteritems():
+        if col in firstcols:
+            continue
+        outmat[:,colidx] = vardict[col]
+        colnames.append(col)
+        colidx += 1
+
+    colnames = firstcols + colnames
+    m,n = outmat.shape
+    datfile = os.path.join(outfolder,'%s.dat' % ename)
+    print 'Saving all variables to data file %s...' % datfile
+    f = open(datfile,'wt')
+    f.write(','.join(colnames)+'\n')
+    for i in range(0,m):
+        line = ','.join('%.4f' % col for col in outmat[i,:])
+        f.write(line+'\n')
+    f.close()
+    
     
 if __name__ == '__main__':
-    #warnings.filterwarnings("ignore", "*matplotlib*")
-    parser = argparse.ArgumentParser()
-    parser.add_argument("eventfile", type=str,nargs='?',
+    aparser = argparse.ArgumentParser()
+    aparser.add_argument("eventfile", type=str,nargs='?',
                         help="A config file specifying event-specific input")
-    parser.add_argument("-c", "--configure", action="store_true",
-                        help="Create global config file")
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="increase output verbosity")
-    args = parser.parse_args()
-    if args.configure:
-        configfile = os.path.join(os.path.expanduser('~'),'.lsprocess','lsprocess.cfg')
-        print 'Configuration tools not yet implemented.'
-        print 'Create your global config file by hand here:\n'
-        print configfile
-        print
-        sys.exit(0)
-    main(parser,args)
-        
+    pargs = aparser.parse_args()
+    main(pargs)
     
     
-
+    
+    
+    
+    
