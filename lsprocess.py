@@ -7,7 +7,6 @@ import argparse
 import ConfigParser
 
 #third party
-import geopandas as gpd
 import numpy as np
 import fiona
 import fiona.crs as crs

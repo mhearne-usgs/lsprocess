@@ -1,3 +1,9 @@
+TODO
+____
+ - Automatically projecting coverage
+ - Handling coverage formats other than shapefile
+ - Handling (projecting as well) any other predictor data in vector format
+
 Introduction
 ------------
 
@@ -17,6 +23,55 @@ The lsprocess application will read a global config file, which will
 contain the paths to the above referenced global raster data sets.  It
 will then take as input a second *event-specific* config file which
 will specify the coverage and predictor data (see above).
+
+Installation and Dependencies
+-----------------------------
+
+This package depends on:
+ * numpy, the fundamental package for scientific computing with Python. <a href="http://www.numpy.org/">http://www.numpy.org/</a>  
+ * fiona, a Python library for reading/writing various vector data formats (shapefile)
+ * rasterio, a Python library used in this case for rasterizing vector data.
+ * neicio, a Python library for reading/writing various grid data formats (ShakeMap and GMT).
+ * neicutil, a catch-all utility Python library (used in this case for the repmat function).
+
+The best way to install numpy is to use one of the Python distributions described here:
+
+<a href="http://www.scipy.org/install.html">http://www.scipy.org/install.html</a>
+
+Anaconda and Enthought distributions have been successfully tested with smtools.
+
+Most of those distributions should include <em>pip</em>, a command line tool for installing and 
+managing Python packages.  You will use pip to install the other dependencies and smtools itself.  
+ 
+You may need to open a new terminal window to ensure that the newly installed versions of python and pip
+are in your path.
+
+To install fiona:
+
+pip install fiona
+
+To install rasterio, follow the instructions found here:
+
+<a href="https://github.com/mapbox/rasterio">https://github.com/mapbox/rasterio</a>
+
+To install neicio:
+
+pip install git+git://github.com/usgs/neicio.git
+
+To install neicutil:
+
+pip install git+git://github.com/usgs/neicutil.git
+
+Uninstalling and Updating
+-------------------------
+
+To uninstall:
+
+pip uninstall lsprocess
+
+To update:
+
+pip install -U git+git://github.com/mhearne-usgs/lsprocess.git
 
 Sample GLOBAL INI file
 --------
