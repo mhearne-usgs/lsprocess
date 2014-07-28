@@ -62,6 +62,10 @@ To install neicutil:
 
 pip install git+git://github.com/usgs/neicutil.git
 
+To install this package:
+
+pip install git+git://github.com/mhearne-usgs/lsprocess.git
+
 Uninstalling and Updating
 -------------------------
 
