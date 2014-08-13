@@ -129,7 +129,7 @@ def main(args):
     #read in global config file
     configfile = os.path.join(os.path.expanduser('~'),'.lsprocess','lsprocess.cfg')
     hasconfig = os.path.isfile(configfile)
-    if not hasconfig and not args.configure:
+    if not hasconfig:
         print
         print 'No config file "%s" found.' % configfile
         print
