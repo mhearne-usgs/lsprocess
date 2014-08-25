@@ -60,7 +60,7 @@ def makeCoverageGrid(covshp,geodict):
                                  default_value=1)
     covgrid = GMTGrid()
     covgrid.geodict = geodict
-    covgrid.griddata = img.copy()
+    covgrid.griddata = np.int8(img.copy())
     return covgrid
 
 def parseEvent(eventfile):
@@ -147,6 +147,8 @@ def main(args):
     
     #construct output folder from global/event configs
     outfolder = os.path.join(outfolder,ename)
+    if not os.path.isdir(outfolder):
+        os.mkdir(outfolder)
     
     #look for bounding box and resolution in event config file, or get from shakemap
     bbox = None
