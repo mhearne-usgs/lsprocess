@@ -56,8 +56,8 @@ def makeCoverageGrid(covshp,geodict):
     outshape = (geodict['nrows'],geodict['ncols'])
     transform = Affine.from_gdal(geodict['xmin'],geodict['xdim'],0.0,geodict['ymax'],0.0,-geodict['ydim'])
     img = features.rasterize(geoms,out_shape=outshape,fill=0,
-                                 transform=transform,all_touched=True,
-                                 default_value=1)
+                             transform=transform,all_touched=True,
+                             default_value=1)
     covgrid = GMTGrid()
     covgrid.geodict = geodict
     covgrid.griddata = np.int8(img.copy())
