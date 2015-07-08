@@ -95,6 +95,10 @@ def parseEvent(eventfile):
         covdict['format'] = config.get('COVERAGE','format')
     if config.has_option('COVERAGE','bbox'):
         covdict['bbox'] = [float(b) for b in config.get('COVERAGE','bbox').split()]
+
+    #look for resolution field
+    if config.has_option('COVERAGE','resolution'):
+        covdict['resolution'] = float(config.get('COVERAGE','resolution'))
         
     predictors = dict(config.items('PREDICTORS'))
     for pgrid in predictors.values():

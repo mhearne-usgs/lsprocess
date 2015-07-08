@@ -97,6 +97,7 @@ Sample event-specific INI file
 <pre>
 [COVERAGE]
 coverage = /Users/user/events/event1/coverage.shp
+resolution = 0.008337 #defaults to the resolution of the ShakeMap
 
 [PREDICTORS]
 shakemap = /Users/user/events/event1/grid.xml #ShakeMap grid XML format
