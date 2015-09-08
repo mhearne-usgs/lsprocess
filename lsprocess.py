@@ -17,13 +17,64 @@ from neicutil.matutil import repmat
 import rasterio
 from affine import Affine
 from rasterio import features
+from scipy.io import netcdf
+
+def getFileResolution(gridfile):
+    xdim = None
+    ydim = None
+    if gridfile.endswith('grd'):
+        cdf = netcdf.netcdf_file(gridfile)
+        xvarname = None
+        if 'x' in cdf.variables.keys():
+            xvarname = 'x'
+            yvarname = 'y'
+        elif 'lon' in cdf.variables.keys():
+            xvarname = 'lon'
+            yvarname = 'lat'
+        if xvarname is not None: #at least two forms of COARDS-compliant netcdf files...
+            xvar = cdf.variables[xvarname].data.copy()
+            yvar = cdf.variables[yvarname].data.copy()
+
+            #do some QA on the x and y data
+            dx = np.diff(xvar)
+            dy = np.diff(yvar)
+
+            isXConsistent = np.abs(1 - np.max(dx)/np.min(dx)) < 0.01
+            isYConsistent = np.abs(1 - np.max(dx)/np.min(dx)) < 0.01
+            if not isXConsistent or not isYConsistent:
+                raise Exception,'X or Y cell dimensions are not consistent!'
+
+            #assign x/y resolution
+            xdim = np.mean(dx)
+            ydim = np.mean(dy)
+        cdf.close()
+    else:
+        gridbase,gridext = os.path.splitext(gridfile)
+        headerfile = gridbase + '.hdr'
+        f = open(headerfile,'rt')
+        for line in f.readlines():
+            parts = line.split()
+            key = parts[0]
+            if key == 'xdim':
+                xdim = float(parts[1])
+            if key == 'ydim':
+                ydim = float(parts[1])
+            if key == 'cellsize':
+                xdim = float(parts[1])
+                ydim = float(parts[1])
+                break
+        f.close()
+    return (xdim,ydim)
+        
 
 def sampleGrid(gridfile,geodict):
+    xdim,ydim = getFileResolution(gridfile)
+    resolution = np.mean([xdim,ydim])
     xmin = geodict['xmin']
     xmax = geodict['xmax']
     ymin = geodict['ymin']
     ymax = geodict['ymax']
-    resolution = geodict['xdim']
+    #resolution = geodict['xdim']
     bounds = (xmin-(resolution*2),xmax+(resolution*2),ymin-(resolution*2),ymax+(resolution*2))
     if gridfile.endswith('grd'):
         grid = GMTGrid(grdfile=gridfile,bounds=bounds)
@@ -226,7 +277,10 @@ def main(args):
     for gridname,gridfile in global_grids.iteritems():
         if not os.path.isfile(gridfile):
             pass
-        grid = sampleGrid(gridfile,geodict)
+        try:
+            grid = sampleGrid(gridfile,geodict)
+        except:
+            pass
         outgridfile = os.path.join(outfolder,gridname+'.grd')
         print 'Saving %s to %s...' % (gridname,outgridfile)
         grid.save(outgridfile)
