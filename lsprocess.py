@@ -279,8 +279,9 @@ def main(args):
             pass
         try:
             grid = sampleGrid(gridfile,geodict)
-        except:
-            pass
+        except Exception,e:
+            print 'There was an error while sampling the "%s" grid "%s". - "%s"' % (gridname,gridfile,str(e))
+            
         outgridfile = os.path.join(outfolder,gridname+'.grd')
         print 'Saving %s to %s...' % (gridname,outgridfile)
         grid.save(outgridfile)
