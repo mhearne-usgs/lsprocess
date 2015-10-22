@@ -233,9 +233,17 @@ def main(args):
 
     #determine what the grid shape and (potentially) new bbox is given bbox and resolution
     nrows,ncols,bbox = getShape(bbox,resolution)
+    #if the coverage dataset is larger than the ShakeMap, we need to make sure our output grid
+    #is contained by the shakemap for interpolation purposes.
+    shakebounds = shakemap.getRange()
+    shakexdim,shakeydim = (shakemap.geodict['xdim'],shakemap.geodict['ydim'])
+    xmin = max(bbox[0],shakebounds[0]+shakexdim*2)
+    xmax = min(bbox[1],shakebounds[1]-shakexdim*2)
+    ymin = max(bbox[2],shakebounds[2]+shakeydim*2)
+    ymax = min(bbox[3],shakebounds[3]-shakeydim*2)
     geodict = {'xdim':resolution,'ydim':resolution,
-               'xmin':bbox[0],'xmax':bbox[1],
-               'ymin':bbox[2],'ymax':bbox[3],
+               'xmin':xmin,'xmax':xmax,
+               'ymin':ymin,'ymax':ymax,
                'nrows':nrows,'ncols':ncols}
     
     #rasterize projected coverage defined bounding box and resolution
