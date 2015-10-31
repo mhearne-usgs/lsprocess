@@ -1,0 +1,195 @@
+#!/usr/bin/env python
+
+#stdlib imports
+import sys
+import ConfigParser
+import os.path
+import argparse
+from functools import partial
+
+#third party imports
+from lsprocess import sample
+import fiona
+from shapely.geometry import Point,Polygon,MultiPolygon,mapping,shape
+from shapely.ops import transform
+import numpy as np
+import pyproj
+
+
+SAMPLING = {'coverage':('file','required'),
+            'dx':('float','required'),
+            'cb':('float','optional'),
+            'nmax':('int','optional'),
+            'nsamp':('int','optional'),
+            'testpercent':('float','optional'),
+            'extent':('any','optional'),
+            'h1':('float','optional'),
+            'h2':('float','optional')}
+
+PREDICTORS = {'shakemap':('file','required'),
+              'shakemap_uncertainty':('file','optional')}
+
+OUTPUT = {'folder':('folder','required'),
+          'basename':('string','required')}
+
+def validateSection(vdict,section,config):
+    params = {}
+    for key,info in vdict.iteritems():
+        vtype,vreq = info
+        if vreq == 'required' and not config.has_option(section,key):
+            raise Exception('Missing required %s parameter "%s" in config file.' % (section,key))
+        if not config.has_option(section,key):
+            params[key] = None
+            continue
+        value = config.get(section,key)
+        if vtype == 'file' and not os.path.isfile(value):
+            raise Exception('Input file "%s" not found.' % value)
+        elif vtype == 'folder' and not os.path.isdir(value):
+            try:
+                os.makedirs(value)
+            except:
+                raise Exception('Input folder "%s" not found.' % value)
+        elif vtype == 'int':
+            try:
+                value = int(value)
+            except ValueError,error:
+                raise Exception('Input parameter %s needs to be an integer.' % key)
+        elif vtype == 'float':
+            try:
+                value = float(value)
+            except ValueError,error:
+                raise Exception('Input parameter %s needs to be a float.' % key)
+        else:
+            pass
+        params[key] = value
+
+    #go through the remaining keys in the section and stuff them as strings into another dictionary
+    suppl = {}
+    for key in config.options(section):
+        if key in vdict.keys():
+            continue
+        suppl[key] = config.get(section,key)
+
+    return (params,suppl)
+
+def main(args):
+    if args.check:
+        config = ConfigParser.ConfigParser()
+        config.readfp(open(args.config))
+        shapefile = config.get('SAMPLING','coverage')
+        dx = float(config.get('SAMPLING','dx'))
+        f = fiona.collection(shapefile,'r')
+        shapes = list(f)
+        bounds = f.bounds
+        f.close()
+
+        xmin,ymin,xmax,ymax = bounds
+
+        dlon = (xmax-xmin)*111191*np.cos(np.radians(np.mean([ymin,ymax])))
+        dlat = (ymax-ymin)*111191
+
+        nrows = int(dlat/dx)
+        ncols = int(dlon/dx)
+
+        if shapes[0]['geometry']['type'] == 'Polygon':
+            latmiddle = ymin + (ymax-ymin)/2.0
+            lonmiddle = xmin + (xmax-xmin)/2.0
+            projstr = '+proj=ortho +lat_0=%.4f +lon_0=%.4f +x_0=0.0 +y_0=0.0' % (latmiddle,lonmiddle)
+            proj = pyproj.Proj(projparams=projstr)
+            project = partial(
+                pyproj.transform,
+                pyproj.Proj(projparams='+proj=latlong'),
+                proj)
+            pshapes = []
+            for tshape in shapes:
+                gshape = shape(tshape['geometry'])
+                pshape = transform(project,gshape)
+                pshapes.append(pshape)
+            cb = sample.getClassBalance(pshapes,bounds,proj)
+        else:
+            cb = None
+
+        print 'At a resolution of %.1f meters, the input shapefile %s would have:' % (dx,shapefile)
+        print '\t%s rows' % format(nrows,",")
+        print '\t%s columns' % format(ncols,",d")
+        print '\t%s total possible samples' % format(nrows*ncols,",d")
+        if cb is not None:
+            print '\tA class balance of %.2f%% hazard pixels' % (cb*100)
+            hazpixels = int(cb*nrows*ncols)
+            maxsamples = int((hazpixels)/cb)
+            print '\tEstimated number of hazard pixels: %s' % format(hazpixels,",d")
+            print '\tEstimated upper bound for nsamp: %s' % format(maxsamples,",d")
+        sys.exit(0)
+    
+    REQSECTIONS = ['SAMPLING','PREDICTORS','OUTPUT']
+    config = ConfigParser.ConfigParser()
+    config.readfp(open(args.config))
+    for section in REQSECTIONS:
+        if section not in config.sections():
+            raise Exception('Missing required section "%s" in config file.' % section)
+    sampleparams,suppl = validateSection(SAMPLING,'SAMPLING',config)
+    shakeparams,predictors = validateSection(PREDICTORS,'PREDICTORS',config)
+    outparams,suppl = validateSection(OUTPUT,'OUTPUT',config)
+
+    #test the things that are presumably predictor variable files
+    for key,value in predictors.iteritems():
+        likelyfile = (key.find('sampling') < 0) and (key.find('attribute') < 0)
+        if likelyfile:
+            if not os.path.isfile(value):
+                raise Exception('PREDICTOR parameter %s with value %s is presumed to be a file, but cannot be found.' % (key,value))
+            ftype = sample.getFileType(value)
+            if ftype == 'unknown':
+                raise Exception('Unknown file type for predictor variable %s' % key)
+            if ftype == 'shapefile':
+                #there needs to be an attribute field for this...
+                if not config.has_option('PREDICTORS',key+'_attribute'):
+                    raise Exception('Input predictor shapefile must be accompanied by a %s field.' % (key+'_attribute'))
+        
+    dftrain,dftest = sample.getDataFrames(sampleparams,shakeparams,predictors,outparams)
+    outfolder = outparams['folder']
+    basename = outparams['basename']
+    trainfname = os.path.join(outfolder,basename+'_train.csv')
+    testfname = os.path.join(outfolder,basename+'_test.csv')
+    print 'Saving training data set to %s' % trainfname
+    print 'Saving testing data set to %s' % trainfname
+    dftrain.to_csv(trainfname,columns=list(dftrain.columns))
+    dftest.to_csv(testfname,columns=list(dftrain.columns))
+        
+
+if __name__ == '__main__':
+    usage = '''Sample landslide/liquefaction coverage data (points or polygons) and any predictor variables, and create a dataframe suitable for 
+    logistic regression in R.
+
+    Input: This software depends on a config file which specified the various input data layers and configuration options. 
+
+    -------------------------------------------------------------------------------------------------------
+    [SAMPLING]
+    coverage = /path/to/hazard_coverage/shapefile #required, must be in decimal degrees
+    dx = 10.0 #sampling resolution in meters, required
+    cb = 0.5  #forced hazard/no-hazard class balance, optional.  Number specifies the fraction of hazard pixels to sample
+    nmax = 1e9 #optional maximum number of possible yes/no sample points (usually set to avoid memory issues)
+    nsamp = 1e5 #optional number of total hazard and no-hazard sample points to collect.
+    testpercent = 0.5 #Fraction of sampled points to be used for testing (1-testpercent) fraction will be used for training. Optional, defaults to 0
+    extent = xmin,xmax,ymin,ymax OR convex #geographic extent within which to sample data.  Four numbers are interpreted as bounding box, the word convex will be interpreted to mean a convex hull.  Default (not specified) will mean the bounding box of the hazard coverage.
+    h1 = 100.0 #Minimum buffer size for sampling non-hazard points when input coverage takes the form of points.
+    h2 = 300.0 #Maximum buffer size for sampling non-hazard points when input coverage takes the form of points.
+
+    [PREDICTORS]
+    layername = /path/to/predictor_grid/or/predictor_shapefile #inputs can be ESRI or GMT format grids, or shapefiles.  Must be in decimal degrees.
+    layername_sampling = nearest #optional grid sampling method (nearest or linear will be supported)
+    layername_attribute = attribute #required for shapefiles - the attribute of each shape to choose as sample.
+
+    shakemap = /path/to/grid.xml #required parameters specifying path to ShakeMap input.  All ground motion values (mmi,pga,pgv,psa03,psa10,psa30) will be sampled.
+    shakemap_uncertainty = /path/to/uncertainty.xml #optional path to ShakeMap uncertainty grid.  All error columns corresponding to ground motions will be sampled.
+
+    [OUTPUT]
+    folder = /path/to/desired/output/location #required, where all data frames, output plots, etc. will be written
+    basename = eqname #base name to assign to all output files (eqname_testing.dat, eqname_training.dat, etc.)
+    -------------------------------------------------------------------------------------------------------
+    '''
+    parser = argparse.ArgumentParser(description=usage,formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('config',help='Config file specifying all inputs to be used to create data frame(s).')
+    parser.add_argument('-c','--check',action='store_true',default=False,help='Check config file, and print out a summary of the sampling.')
+    pargs = parser.parse_args()
+    main(pargs)
+    

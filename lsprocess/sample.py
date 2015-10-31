@@ -10,10 +10,30 @@ import fiona
 from shapely.geometry import Polygon,shape,MultiPoint,Point
 import matplotlib.pyplot as plt
 import pyproj
+import pandas as pd
 from shapely.ops import transform
 from grid.grid2d import Grid2D
 from grid.gmt import GMTGrid
 from grid.gdal import GDALGrid
+from grid.shake import ShakeGrid
+
+def getFileType(filename):
+    fname,fext = os.path.splitext(filename)
+    dbf = fname + '.dbf'
+    ftype = 'unknown'
+    if os.path.isfile(dbf):
+        ftype = 'shapefile'
+    else:
+        try:
+            fdict = GMTGrid.getFileGeoDict(filename)
+            ftype = 'grid'
+        except Exception,error:
+            try:
+                fdict,xvar,yvar = GDALGrid.getFileGeoDict(filename)
+                ftype = 'grid'
+            except:
+                pass
+    return ftype
 
 def getProjectedShapes(shapes,xmin,xmax,ymin,ymax):
     latmiddle = ymin + (ymax-ymin)/2.0
@@ -26,11 +46,11 @@ def getProjectedShapes(shapes,xmin,xmax,ymin,ymax):
         proj)
 
     pshapes = []
-    for shape in shapes:
-        if shape['geometry']['type'] == 'Polygon':
-            pshapegeo = Polygon(shape['geometry']['coordinates'])
+    for tshape in shapes:
+        if tshape['geometry']['type'] == 'Polygon':
+            pshapegeo = shape(tshape['geometry'])
         else:
-            pshapegeo = Point(shape['geometry']['coordinates'])
+            pshapegeo = shape(tshape['geometry'])
         pshape = transform(project, pshapegeo)
         pshapes.append(pshape) #assuming here that these are simple polygons
 
@@ -42,15 +62,15 @@ def getYesPoints(pshapes,proj,dx,nmax):
     mymin = 9e10
     mymax = -9e10
     for pshape in pshapes:
-        x,y = zip(*pshape.boundary.coords)
-        if np.min(x) < mxmin:
-            mxmin = np.min(x)
-        if np.max(x) > mxmax:
-            mxmax = np.max(x)
-        if np.min(y) < mymin:
-            mymin = np.min(y)
-        if np.max(y) > mymax:
-            mymax = np.max(y)
+        pxmin,pymin,pxmax,pymax = pshape.bounds
+        if pxmin < mxmin:
+            mxmin = pxmin
+        if pxmax > mxmax:
+            mxmax = pxmax
+        if pymin < mymin:
+            mymin = pymin
+        if pymax > mymax:
+            mymax = pymax
 
     xvar = np.arange(mxmin,mxmax+dx,dx)
     yvar = np.arange(mymin,mymax+dx,dx)
@@ -73,15 +93,14 @@ def getYesPoints(pshapes,proj,dx,nmax):
     #Get the "yes" points to sample from
     yespoints = []
     idx = []
+    shapeidx = 0
     if pshapes[0].type == 'Polygon':
         #loop over shapes, projecting each one, then get the sample points
         for pshape in pshapes:
-            x,y = zip(*pshape.boundary.coords)
-            #get the bbox of the projected shape
-            pxmin = np.min(x)
-            pxmax = np.max(x)
-            pymin = np.min(y)
-            pymax = np.max(y)
+            if not shapeidx % 1000:
+                print 'Searching polygon %i of %i' % (shapeidx,len(pshapes))
+            shapeidx += 1
+            pxmin,pymin,pxmax,pymax = pshape.bounds
             leftcol = np.where((pxmin - xvar) >= 0)[0].argmax()
             rightcol = np.where((xvar - pxmax) >= 0)[0][0]
             bottomrow = np.where((pymin - yvar) >= 0)[0].argmax()
@@ -103,7 +122,7 @@ def getYesPoints(pshapes,proj,dx,nmax):
             
     return (np.array(yespoints),nrows,ncols,xvar,yvar,idx)
 
-def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=1.0,classBalance=None,extent=None):
+def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=1.0,classBalance=None,extent=None,Nsamp=100):
     """
     shapefile - path to shapefile, presumed to be geographic
     dx - resolution of sampling in X and Y
@@ -119,7 +138,7 @@ def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=1.0,classBalance=None
     
     f.close()
 
-    return sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalance=None,extent=None)
+    return sampleFromShapes(shapes,bounds,dx=dx,nmax=nmax,testPercent=testPercent,classBalance=classBalance,extent=extent,Nsamp=Nsamp)
 
 def sampleYes(array,N):
     #array is a Mx2 array of X,Y points
@@ -271,24 +290,37 @@ def sampleShapeFile(shapefile,xypoints,attribute):
     ymin = np.min(xypoints[:,1])
     ymax = np.max(xypoints[:,1])
     #xypoints should be projected back to lat/lon
-    f = open(shapefile,'r')
-    shapes = list(f.items(bbox=(xmin,ymin,xmax,ymax)))
+    f = fiona.collection(shapefile,'r')
+    tshapes = list(f.items(bbox=(xmin,ymin,xmax,ymax)))
+    shapes = []
+    for fid,shape in tshapes:
+        shapes.append(shape)
     f.close()
-    return sampleShapes(shapes,xypoints)
+    return sampleShapes(shapes,xypoints,attribute)
+
+def subsetShapes(shapefile,bounds):
+    xmin,ymin,xmax,ymax = bounds
+    #xypoints should be projected back to lat/lon
+    f = fiona.collection(shapefile,'r')
+    tshapes = list(f.items(bbox=(xmin,ymin,xmax,ymax)))
+    shapes = []
+    for fid,shape in tshapes:
+        shapes.append(shape)
+    f.close()
+    return shapes
 
 def sampleShapes(shapes,xypoints,attribute):
     samples = []
     for x,y in xypoints:
         for tshape in shapes:
-            polygon = Polygon(tshape['geometry']['coordinates'])
+            polygon = shape(tshape['geometry'])
             point = Point(x,y)
             if polygon.contains(point):
                 sample = tshape['properties'][attribute]
                 samples.append(sample)
     return np.array(samples)
 
-def sampleGridFile(gridfile,xypoints,dx,method='nearest'):
-    dxdegrees = dx / 111191
+def sampleGridFile(gridfile,xypoints,method='nearest'):
     xmin = np.min(xypoints[:,0])
     xmax = np.max(xypoints[:,0])
     ymin = np.min(xypoints[:,1])
@@ -324,6 +356,83 @@ def sampleFromGrid(grid,xypoints):
         samples.append(sample)
 
     return np.array(samples)
+
+def sampleFromShakeMap(shakefile,layer,xypoints):
+    shakegrid = ShakeGrid.load(shakefile)
+    return sampleFromMultiGrid(shakegrid,layer,points)
+
+def sampleFromMultiGrid(multigrid,layer,xypoints):
+    if layer not in multigrid.getLayerNames():
+        raise Exception('Layer %s not found in grid' % layer)
+    hazgrid = multigrid.getLayer(layer)
+    return sampleFromGrid(hazgrid,xypoints)
+
+def getDataFrames(sampleparams,shakeparams,predictors,outparams):
+    coverage = sampleparams['coverage']
+    f = fiona.collection(coverage,'r')
+    cbounds = f.bounds
+    f.close()
+    dx = sampleparams['dx']
+    cb = sampleparams['cb']
+    nmax = sampleparams['nmax']
+    nsamp = sampleparams['nsamp']
+    testpercent = sampleparams['testpercent']
+    extent = sampleparams['extent']
+    h1 = sampleparams['h1']
+    h2 = sampleparams['h2']
+
+    yestest,yestrain,notest,notrain,xvar,yvar,pshapes,proj = sampleFromFile(coverage,dx=dx,nmax=nmax,testPercent=testpercent,classBalance=cb,extent=extent,Nsamp=nsamp)
+
+    traincolumns = OrderedDict()
+    testcolumns = OrderedDict()
+    traincolumns['lat'] = np.concatenate((yestrain[:,1],notrain[:,1]))
+    traincolumns['lon'] = np.concatenate((yestrain[:,0],notrain[:,0]))
+    traincolumns['coverage'] = np.concatenate((np.ones_like(yestrain[:,1]),np.ones_like(notrain[:,1])))
+    testcolumns['lat'] = np.concatenate((yestest[:,1],notest[:,1]))
+    testcolumns['lon'] = np.concatenate((yestest[:,0],notest[:,0]))
+    testcolumns['coverage'] = np.concatenate((np.ones_like(yestest[:,1]),np.ones_like(notest[:,1])))
+    
+    
+    for predname,predfile in predictors.iteritems():
+        ftype = getFileType(predfile)
+        if ftype == 'shapefile':
+            attribute = predictors[predname+'_attribute']
+            shapes = subsetShapes(predfile,cbounds)
+            yes_test_samples = sampleShapes(shapes,yestest,attribute)
+            no_test_samples = sampleShapes(shapes,notest,attribute)
+            yes_train_samples = sampleShapes(shapes,yestrain,attribute)
+            no_train_samples = sampleShapes(shapes,notrain,attribute)
+            testcolumns[predname] = np.concatenate((yes_test_samples,no_test_samples))
+            traincolumns[predname] = np.concatenate((yes_train_samples,no_train_samples))
+        elif ftype == 'grid':
+            method = 'nearest'
+            if predictors.has_key(predname+'_sampling'):
+                method = predictors[predname+'_sampling']
+            yes_test_samples = sampleGridFile(predfile,yestest,method=method)
+            no_test_samples = sampleGridFile(predfile,notest,method=method)
+            yes_train_samples = sampleGridFile(predfile,yestrain,method=method)
+            no_train_samples = sampleGridFile(predfile,notrain,method=method)
+            testcolumns[predname] = np.concatenate((yes_test_samples,no_test_samples))
+            traincolumns[predname] = np.concatenate((yes_train_samples,no_train_samples))
+        else:
+            continue #attribute or sampling method key
+
+    #sample the shakemap
+    layers = ['mmi','pga','pgv','psa03','psa10','psa30']
+    shakegrid = ShakeGrid.load(shakeparams['shakemap'])
+    for layer in layers:
+        yes_test_samples = sampleFromMultiGrid(shakegrid,layer,yestest)
+        no_test_samples = sampleFromMultiGrid(shakegrid,layer,notest)
+        yes_train_samples = sampleFromMultiGrid(shakegrid,layer,yestrain)
+        no_train_samples = sampleFromMultiGrid(shakegrid,layer,notrain)
+        testcolumns[layer] = np.concatenate((yes_test_samples,no_test_samples))
+        traincolumns[layer] = np.concatenate((yes_train_samples,no_train_samples))
+        
+    dftest = pd.DataFrame(testcolumns)
+    dftrain = pd.DataFrame(traincolumns)
+
+    return (dftrain,dftest)
+    
 
 def test_sampleArray():
     array = np.random.rand(10,2)
