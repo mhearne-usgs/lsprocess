@@ -18,6 +18,13 @@ from grid.gdal import GDALGrid
 from grid.shake import ShakeGrid
 
 def getFileType(filename):
+    """
+    Determine whether input file is a shapefile or a grid (ESRI or GMT).
+    :param filename:
+      String path to candidate filename.
+    :returns:
+      String, one of 'shapefile','grid','unknown'.
+    """
     fname,fext = os.path.splitext(filename)
     dbf = fname + '.dbf'
     ftype = 'unknown'
@@ -36,6 +43,22 @@ def getFileType(filename):
     return ftype
 
 def getProjectedShapes(shapes,xmin,xmax,ymin,ymax):
+    """
+    Take a sequence of geographic shapes and project them to a bounds-centered orthographic projection.
+    :param shapes:
+      Sequence of shapes, as read in by fiona.collection()
+    :param xmin:
+      Eastern boundary of all shapes
+    :param xmax:
+      Western boundary of all shapes
+    :param ymin:
+      Southern boundary of all shapes
+    :param ymax:
+      Northern boundary of all shapes
+    :returns:
+       - Input sequence of shapes, projected to orthographic
+       - PyProj projection object used to transform input shapes
+    """
     latmiddle = ymin + (ymax-ymin)/2.0
     lonmiddle = xmin + (xmax-xmin)/2.0
     projstr = '+proj=ortho +lat_0=%.4f +lon_0=%.4f +x_0=0.0 +y_0=0.0' % (latmiddle,lonmiddle)
@@ -57,6 +80,24 @@ def getProjectedShapes(shapes,xmin,xmax,ymin,ymax):
     return (pshapes,proj)
 
 def getYesPoints(pshapes,proj,dx,nmax):
+    """
+    Collect x/y coordinates of all points within hazard coverage polygons at desired resolution.
+    :param pshapes:
+      Sequence of orthographically projected shapes.
+    :param proj:
+      PyProj projection object used to transform input shapes
+    :param dx:
+      Float resolution of grid at which to sample points
+    :param nmax:
+      Threshold maximum number of points in total data mesh.
+    :returns:
+      - numpy 2-D array of X/Y coordinates inside hazard polygons.
+      - number of rows of resulting mesh
+      - number of columns of resulting mesh
+      - numpy array of x coordinate centers of columns
+      - numpy array of y coordinate centers of rows
+      - 1D array of indices where yes pixels are located (use np.unravel_index to unpack to 2D array)
+    """
     mxmin = 9e10
     mxmax = -9e10
     mymin = 9e10
@@ -122,14 +163,32 @@ def getYesPoints(pshapes,proj,dx,nmax):
             
     return (np.array(yespoints),nrows,ncols,xvar,yvar,idx)
 
-def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=1.0,classBalance=None,extent=None,Nsamp=100):
+def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=0.0,classBalance=None,extent=None,Nsamp=100):
     """
-    shapefile - path to shapefile, presumed to be geographic
-    dx - resolution of sampling in X and Y
-    nmax - if not None, maximum allowed number of mesh points in X and Y together (nrows*ncols).  Overrides dx.
-    testPercent - says how many samples to put into output data frame.
-    classBalance - If None, uses CB of data (raise exception for points).  If specified, is the fraction of "yes" pixels, where "yes"+"no" = 1
-    extent - if none, use the bounding box of the data in the shapefile. 
+    Sample yes/no test and training pixels from shapefile input.
+    :param shapefile:
+       path to shapefile, presumed to be decimal degrees.
+    :param dx:
+       resolution of sampling in X and Y (meters)
+    :param nmax:
+      if not None, maximum allowed number of mesh points in X and Y together (nrows*ncols).  Overrides dx.
+    :param testPercent:
+      Fraction of total samples to put into output testing data frame. (training frame gets 1-testpercent).  Default is 0.0.
+    :param classBalance:
+      If None, uses class balance of data (raises exception for points).  If specified, is the fraction of "yes" pixels, where "yes"+"no" = 1
+    :param extent:
+      If none, use the bounding box of the data in the shapefile. 
+    :param Nsamp:
+      Number of total (yes+no) sample points.
+    :returns:
+      - sequence of XY coordinates for:
+         - YesTestPoints
+         - YesTrainPoints
+         - NoTestPoints
+         - NoTrainPoints
+      - numpy array of mesh column centers
+      - numpy array of mesh row centers
+      - PyProj object defining orthographic projection of xy points
     """
     #read the shapes in from the file
     f = fiona.collection(shapefile,'r')
@@ -141,6 +200,15 @@ def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=1.0,classBalance=None
     return sampleFromShapes(shapes,bounds,dx=dx,nmax=nmax,testPercent=testPercent,classBalance=classBalance,extent=extent,Nsamp=Nsamp)
 
 def sampleYes(array,N):
+    """
+    Sample without replacement N points from an array of XY coordinates.
+    :param array:
+      2D numpy array of XY points
+    :param N:
+      int number of points to sample without replacement from input array.
+    :returns:
+      Tuple of (sampled points, unsampled points)
+    """
     #array is a Mx2 array of X,Y points
     m,n = array.shape
     allidx = np.arange(0,m)
@@ -180,6 +248,32 @@ def sampleNo(xvar,yvar,N,avoididx):
     return (samples,newavoididx)
 
 def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalance=None,extent=None,Nsamp=100):
+    """
+    Sample yes/no test and training pixels from shapefile input.
+    :param shapes:
+       Sequence of projected shapes.
+    :param dx:
+       resolution of sampling in X and Y (meters)
+    :param nmax:
+      if not None, maximum allowed number of mesh points in X and Y together (nrows*ncols).  Overrides dx.
+    :param testPercent:
+      Fraction of total samples to put into output testing data frame. (training frame gets 1-testpercent).  Default is 0.0.
+    :param classBalance:
+      If None, uses class balance of data (raises exception for points).  If specified, is the fraction of "yes" pixels, where "yes"+"no" = 1
+    :param extent:
+      If none, use the bounding box of the data in the shapefile. 
+    :param Nsamp:
+      Number of total (yes+no) sample points.
+    :returns:
+      - sequence of XY coordinates for:
+         - YesTestPoints
+         - YesTrainPoints
+         - NoTestPoints
+         - NoTrainPoints
+      - numpy array of mesh column centers
+      - numpy array of mesh row centers
+      - PyProj object defining orthographic projection of xy points
+    """
     xmin,ymin,xmax,ymax = bounds
     shptype = shapes[0]['geometry']['type']
     if shptype not in ['Point','Polygon']:
@@ -230,6 +324,15 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
     return (YesTestPoints,YesTrainPoints,NoTestPoints,NoTrainPoints,xvar,yvar,pshapes,proj)
 
 def projectBack(points,proj):
+    """
+    Project a 2D array of XY points from orthographic projection to decimal degrees.
+    :param points:
+      2D numpy array of XY points in orthographic projection.
+    :param proj:
+      PyProj object defining projection.
+    :returns:
+      2D numpy array of Lon/Lat coordinates.
+    """
     mpoints = MultiPoint(points)
     project = partial(
         pyproj.transform,
@@ -244,6 +347,19 @@ def projectBack(points,proj):
     return coords
 
 def plotPoints(shapes,YesTestPoints,YesTrainPoints,NoTestPoints,NoTrainPoints,filename):
+    """
+    Plot yes/no sample points and polygons.
+    :param shapes:
+      shapes (decimal degrees) as read in by fiona.collection()
+    :param YesTestPoints:
+      numpy 2D array of testing hazard sample points, decimal degrees.
+    :param YesTrainPoints:
+      numpy 2D array of training hazard sample points, decimal degrees. 
+    :param NoTestPoints:
+      numpy 2D array of testing non-hazard sample points, decimal degrees.
+    :param NoTrainPoints:
+      numpy 2D array of training non-hazard sample points, decimal degrees. 
+    """
     #plot the "yes" sample points and the projected polygons
     figure = plt.figure(figsize=(8,8))
     plt.hold(True)
@@ -267,6 +383,17 @@ def plotPoints(shapes,YesTestPoints,YesTrainPoints,NoTestPoints,NoTrainPoints,fi
     plt.savefig(filename)
 
 def getClassBalance(pshapes,bounds,proj):
+    """
+    Get native class balance of projected shapes, assuming a rectangular bounding box.
+    :param pshapes:
+      Sequence of projected shapely shapes
+    :param bounds:
+      Desired bounding box, in decimal degrees.
+    :param proj:
+      PyProj object defining orthographic projection of shapes.
+    :returns:
+      Float fraction of hazard polygons (area of hazard polygons/total area of bbox) 
+    """
     xmin,ymin,xmax,ymax = bounds
     bpoly = Polygon([(xmin,ymax),
                      (xmax,ymax),
@@ -285,6 +412,17 @@ def getClassBalance(pshapes,bounds,proj):
     return polyarea/totalarea
 
 def sampleShapeFile(shapefile,xypoints,attribute):
+    """
+    Open a shapefile (decimal degrees) and get the attribute value at each of the input XY points. Slower than sampling grids.
+    :param shapefile:
+      ESRI shapefile (decimal degrees) of predictor variable.
+    :param xypoints:
+      2D numpy array of XY points, in decimal degrees.
+    :param attribute:
+      String name of attribute to sample in each of the shapes.
+    :returns:
+      1D array of attribute values at each of XY points.
+    """
     xmin = np.min(xypoints[:,0])
     xmax = np.max(xypoints[:,0])
     ymin = np.min(xypoints[:,1])
@@ -299,6 +437,13 @@ def sampleShapeFile(shapefile,xypoints,attribute):
     return sampleShapes(shapes,xypoints,attribute)
 
 def subsetShapes(shapefile,bounds):
+    """
+    Return the subset of shapes from a shapefile within a given bounding box. (Can be slow).
+    :param shapefile:
+      ESRI shapefile (decimal degrees) of predictor variable.
+    :param bounds:
+      Bounding box (decimal degrees) to use for subset (xmin,ymin,xmax,ymax)
+    """
     xmin,ymin,xmax,ymax = bounds
     #xypoints should be projected back to lat/lon
     f = fiona.collection(shapefile,'r')
@@ -310,6 +455,17 @@ def subsetShapes(shapefile,bounds):
     return shapes
 
 def sampleShapes(shapes,xypoints,attribute):
+    """
+    Get the attribute value at each of the input XY points for sequence of input shapes (decimal degrees). Slower than sampling grids.
+    :param shapes:
+      sequence of shapes (decimal degrees) of predictor variable.
+    :param xypoints:
+      2D numpy array of XY points, in decimal degrees.
+    :param attribute:
+      String name of attribute to sample in each of the shapes.
+    :returns:
+      1D array of attribute values at each of XY points.
+    """
     samples = []
     for x,y in xypoints:
         for tshape in shapes:
@@ -321,6 +477,17 @@ def sampleShapes(shapes,xypoints,attribute):
     return np.array(samples)
 
 def sampleGridFile(gridfile,xypoints,method='nearest'):
+    """
+    Sample grid file (ESRI or GMT format) at each of a set of XY (decimal degrees) points.
+    :param gridfile:
+      Name of ESRI or GMT grid format file from which to sample values.
+    :param xypoints:
+      2D numpy array of XY points, decimal degrees.
+    :param method:
+      Interpolation method, either 'nearest' or 'linear'.
+    :returns:
+      1D numpy array of grid values at each of input XY points.
+    """
     xmin = np.min(xypoints[:,0])
     xmax = np.max(xypoints[:,0])
     ymin = np.min(xypoints[:,1])
@@ -349,25 +516,83 @@ def sampleGridFile(gridfile,xypoints,method='nearest'):
 
     return sampleFromGrid(grid,xypoints)
 
-def sampleFromGrid(grid,xypoints):
+def sampleFromGrid(grid,xypoints,method='nearest'):
+    """
+    Sample 2D grid object at each of a set of XY (decimal degrees) points.
+    :param grid:
+      Grid2D object at which to sample data.
+    :param xypoints:
+      2D numpy array of XY points, decimal degrees.
+    :param method:
+      Interpolation method, either 'nearest' or 'linear'.
+    :returns:
+      1D numpy array of grid values at each of input XY points.
+    """
     samples = []
     for lon,lat in xypoints:
-        sample = grid.getValue(lat,lon)
+        sample = grid.getValue(lat,lon,method=method)
         samples.append(sample)
 
     return np.array(samples)
 
 def sampleFromShakeMap(shakefile,layer,xypoints):
+    """
+    Sample ShakeMap grid file at each of a set of XY (decimal degrees) points.
+    :param shakefile:
+      Grid2D object at which to sample data.
+    :param xypoints:
+      2D numpy array of XY points, decimal degrees.
+    :returns:
+      1D numpy array of grid values at each of input XY points.
+    """
     shakegrid = ShakeGrid.load(shakefile)
     return sampleFromMultiGrid(shakegrid,layer,points)
 
 def sampleFromMultiGrid(multigrid,layer,xypoints):
+    """
+    Sample MultiGrid object (like a ShakeGrid) at each of a set of XY (decimal degrees) points.
+    :param multigrid:
+      MultiGrid object at which to sample data.
+    :param xypoints:
+      2D numpy array of XY points, decimal degrees.
+    :returns:
+      1D numpy array of grid values at each of input XY points.
+    """
     if layer not in multigrid.getLayerNames():
         raise Exception('Layer %s not found in grid' % layer)
     hazgrid = multigrid.getLayer(layer)
     return sampleFromGrid(hazgrid,xypoints)
 
 def getDataFrames(sampleparams,shakeparams,predictors,outparams):
+    """
+    Return Pandas training and testing data frames containing sampled data from hazard coverage, ShakeMap, and predictor data sets.
+    :param sampleparams:
+      Dictionary with at least these values:
+        - coverage: Name of hazard coverage shapefile (decimal degrees). Required.
+        - dx: Float desired sample resolution, and can be overridden by nmax, below (meters).  Required.
+        - cb: Desired class balance, i.e., fraction of sampled points that should be from hazard polygons. Optional for polygons, Required for points.
+        - nmax: Maximum number of possible yes/no sample points (usually set to avoid memory issues). Optional.
+        - nsamp: Number of total hazard and no-hazard sample points to collect.  Required.
+        - testpercent: Fraction of sampled points to be used for testing (1-testpercent) will be used for training. Optional, defaults to 0
+        - extent: xmin,xmax,ymin,ymax OR convex #geographic extent within which to sample data.  Four numbers are interpreted as bounding box, the word convex will be interpreted to mean a convex hull.  Default (not specified) will mean the bounding box of the hazard coverage. Optional.
+        - h1: Minimum buffer size for sampling non-hazard points when input coverage takes the form of points. Optional for polygons, required for points.
+        - h2: Maximum buffer size for sampling non-hazard points when input coverage takes the form of points. Optional for polygons, required for points.
+    :param shakeparams:
+      Dictionary with at least these values:
+        - shakemap: Name of shakemap file to use for sampling hazard values. Required.
+        - shakemap_uncertainty: Name of shakemap uncertainty file to use for sampling hazard uncertainty values. Optional.
+    :param predictors:
+      Dictionary with at least these values:
+        - layername: Path to ESRI shapefile, or grid in GMT or ESRI format which represents predictor data. Required.
+        - layername_sampling: 'nearest' or 'linear', optional for grids, not used for shapefiles.
+        - layername_attribute: Name of attribute in shapefile which should be sampled at hazard/non-hazard points.  Required for points.
+    :param outparams:
+      Dictionary with at least these values:
+        - folder: Name of folder where all output (data frames, plots) will be written.  Will be created if does not exist. Required.
+        - basename: The name that will be included in all output file names (i.e., northridge_train.csv). Required.
+    :returns:
+      Tuple of (training,testing) Pandas data frames. 
+    """
     coverage = sampleparams['coverage']
     f = fiona.collection(coverage,'r')
     cbounds = f.bounds
