@@ -1,8 +1,8 @@
 TODO
 ____
- - Automatically projecting coverage
- - Handling coverage formats other than shapefile
- - Handling (projecting as well) any other predictor data in vector format
+ - Handling point data sets
+ - Handling custom data extents
+ - Handling linear grid sampling method
 
 Introduction
 ------------
@@ -11,36 +11,23 @@ lsprocess is a project to convert data in various forms into a package
 of raster data files suitable for use in logistic regression for the
 PAGER Secondary Hazards Project.  
 
-Data can be broken up into three
-categories:
-
- * Global data - Global raster data sets which will be applied to all
-   input events.
- * Coverage data - An event specific landslide coverage vector data
-   set, in ShapeFile or XY (Lon/Lat) format.
- * Predictor data - Event specific raster/vector data sets which are
-   used as predictor variables in logistic regression.
-
-The lsprocess application will read a global config file, which will
-contain the paths to the above referenced global raster data sets.  It
-will then take as input a second *event-specific* config file which
-will specify the coverage and predictor data (see above).
-
 Installation and Dependencies
 -----------------------------
 
 This package depends on:
  * numpy, the fundamental package for scientific computing with Python. <a href="http://www.numpy.org/">http://www.numpy.org/</a>  
+ * matplotlib, the fundamental plotting library for scientific python.
+ * pandas, library providing high-performance, easy-to-use data structures and data analysis tools.
  * fiona, a Python library for reading/writing various vector data formats (shapefile)
- * rasterio, a Python library used in this case for rasterizing vector data.
- * neicio, a Python library for reading/writing various grid data formats (ShakeMap and GMT).
- * neicutil, a catch-all utility Python library (used in this case for the repmat function).
+ * shapely, a Python library for doing geometric operations on points and polygons.
+ * pyproj, a module which supports geographic projections.
+ * grid, a Python library for reading/writing various grid data formats (ShakeMap and GMT).
 
-The best way to install numpy is to use one of the Python distributions described here:
+The best way to install numpy, pandas, and matplotlib is to use one of the Python distributions described here:
 
 <a href="http://www.scipy.org/install.html">http://www.scipy.org/install.html</a>
 
-Anaconda and Enthought distributions have been successfully tested with smtools.
+Anaconda and Enthought distributions have been successfully tested with lsprocess.
 
 Most of those distributions should include <em>pip</em>, a command line tool for installing and 
 managing Python packages.  You will use pip to install the other dependencies and smtools itself.  
@@ -48,21 +35,20 @@ managing Python packages.  You will use pip to install the other dependencies an
 You may need to open a new terminal window to ensure that the newly installed versions of python and pip
 are in your path.
 
-To install fiona:
+To install fiona and shapely:
 
-pip install fiona
+conda install fiona
 
-To install rasterio, follow the instructions found here:
+conda install shapely
 
-<a href="https://github.com/mapbox/rasterio">https://github.com/mapbox/rasterio</a>
 
-To install neicio:
+To install pyproj:
 
-pip install git+git://github.com/usgs/neicio.git
+pip install pyproj
 
-To install neicutil:
+To install grid:
 
-pip install git+git://github.com/usgs/neicutil.git
+pip install git+git://github.com/mhearne-usgs/grid.git
 
 To install this package:
 
