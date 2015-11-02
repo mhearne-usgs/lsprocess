@@ -71,6 +71,19 @@ A script called "secsample" will be installed in your path.  This script should 
 the name of a config file whose format is described below.  The script will create a training and (possibly) a testing CSV file
 in the designated output directory.
 
+It is also possible to use secsample to get information about the sampling that will be done using the config file.  Below is a sample 
+of the type of output you would get:
+
+secsample -c earthquake.ini
+At a resolution of 30.0 meters, the input shapefile /Users/mhearne/data/landslide/northridge/northridge_dd.shp would have:
+	2,482 rows
+	2,769 columns
+	6,872,658 total possible samples
+	A class balance of 0.39% hazard pixels
+	Estimated number of hazard pixels: 26,474
+	Estimated upper bound for nsamp: 6,872,540
+
+
 Sample INI file
 --------
 <pre>
