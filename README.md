@@ -74,6 +74,7 @@ in the designated output directory.
 It is also possible to use secsample to get information about the sampling that will be done using the config file.  Below is a sample 
 of the type of output you would get:
 
+<pre>
 secsample -c earthquake.ini
 At a resolution of 30.0 meters, the input shapefile /Users/mhearne/data/landslide/northridge/northridge_dd.shp would have:
 	2,482 rows
@@ -82,7 +83,7 @@ At a resolution of 30.0 meters, the input shapefile /Users/mhearne/data/landslid
 	A class balance of 0.39% hazard pixels
 	Estimated number of hazard pixels: 26,474
 	Estimated upper bound for nsamp: 6,872,540
-
+</pre>
 
 Sample INI file
 --------
