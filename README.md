@@ -21,7 +21,7 @@ This package depends on:
  * fiona, a Python library for reading/writing various vector data formats (shapefile)
  * shapely, a Python library for doing geometric operations on points and polygons.
  * pyproj, a module which supports geographic projections.
- * grid, a Python library for reading/writing various grid data formats (ShakeMap and GMT).
+ * MapIO, a Python library for reading/writing various grid data formats (ShakeMap and GMT).
 
 The best way to install numpy, pandas, and matplotlib is to use one of the Python distributions described here:
 
@@ -46,9 +46,9 @@ To install pyproj:
 
 pip install pyproj
 
-To install grid:
+To install MapIO:
 
-pip install git+git://github.com/mhearne-usgs/grid.git
+pip install git+git://github.com/usgs/MapIO.git
 
 To install this package:
 
