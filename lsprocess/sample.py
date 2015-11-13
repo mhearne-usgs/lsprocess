@@ -12,10 +12,10 @@ import matplotlib.pyplot as plt
 import pyproj
 import pandas as pd
 from shapely.ops import transform
-from grid.grid2d import Grid2D
-from grid.gmt import GMTGrid
-from grid.gdal import GDALGrid
-from grid.shake import ShakeGrid
+from mapio.grid2d import Grid2D
+from mapio.gmt import GMTGrid
+from mapio.gdal import GDALGrid
+from mapio.shake import ShakeGrid
 
 def getFileType(filename):
     """
@@ -61,11 +61,11 @@ def getProjectedShapes(shapes,xmin,xmax,ymin,ymax):
     """
     latmiddle = ymin + (ymax-ymin)/2.0
     lonmiddle = xmin + (xmax-xmin)/2.0
-    projstr = '+proj=ortho +lat_0=%.4f +lon_0=%.4f +x_0=0.0 +y_0=0.0' % (latmiddle,lonmiddle)
+    projstr = '+proj=ortho +datum=WGS84 +lat_0=%.4f +lon_0=%.4f +x_0=0.0 +y_0=0.0' % (latmiddle,lonmiddle)
     proj = pyproj.Proj(projparams=projstr)
     project = partial(
         pyproj.transform,
-        pyproj.Proj(projparams='+proj=latlong'),
+        pyproj.Proj(proj='latlong', datum='WGS84'),
         proj)
 
     pshapes = []
@@ -337,7 +337,7 @@ def projectBack(points,proj):
     project = partial(
         pyproj.transform,
         proj,
-        pyproj.Proj(projparams='+proj=latlong'))
+        pyproj.Proj(proj='latlong', datum='WGS84'))
     gmpoints = transform(project, mpoints)
     coords = []
     for point in gmpoints.geoms:
@@ -401,7 +401,7 @@ def getClassBalance(pshapes,bounds,proj):
                      (xmin,ymin)])
     project = partial(
         pyproj.transform,
-        pyproj.Proj(projparams='+proj=latlong'),
+        pyproj.Proj(proj='latlong', datum='WGS84'),
         proj)
     bpolyproj = transform(project,bpoly)
     totalarea = bpolyproj.area
@@ -508,7 +508,16 @@ def sampleGridFile(gridfile,xypoints,method='nearest'):
     xmax = xmax + fdict['xdim']*3
     ymin = ymin - fdict['ydim']*3
     ymax = ymax + fdict['ydim']*3
-    sdict = {'xmin':xmin,'xmax':xmax,'ymin':ymin,'ymax':ymax}
+    bounds = (xmin,xmax,ymin,ymax)
+    if gridtype == 'gmt':
+        fgeodict = GMTGrid.getFileGeoDict(gridfile)
+    else:
+        fgeodict,xvar,yvar = GDALGrid.getFileGeoDict(gridfile)
+    xdim,ydim = (fgeodict['xdim'],fgeodict['ydim'])
+    try:
+        sdict = GMTGrid.fixGeoDict(bounds,xdim,ydim,-1,-1,preserve='dims')
+    except:
+        pass
     if gridtype == 'gmt':
         grid = GMTGrid.load(gridfile,samplegeodict=sdict,resample=False,method=method,doPadding=True)
     else:

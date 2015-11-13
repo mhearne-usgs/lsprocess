@@ -94,11 +94,11 @@ def main(args):
         if shapes[0]['geometry']['type'] == 'Polygon':
             latmiddle = ymin + (ymax-ymin)/2.0
             lonmiddle = xmin + (xmax-xmin)/2.0
-            projstr = '+proj=ortho +lat_0=%.4f +lon_0=%.4f +x_0=0.0 +y_0=0.0' % (latmiddle,lonmiddle)
+            projstr = '+proj=ortho +datum=WGS84 +lat_0=%.4f +lon_0=%.4f +x_0=0.0 +y_0=0.0' % (latmiddle,lonmiddle)
             proj = pyproj.Proj(projparams=projstr)
             project = partial(
                 pyproj.transform,
-                pyproj.Proj(projparams='+proj=latlong'),
+                pyproj.Proj(proj='latlong', datum='WGS84'),
                 proj)
             pshapes = []
             for tshape in shapes:
