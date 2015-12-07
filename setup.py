@@ -7,5 +7,5 @@ setup(name='lsprocess',
       author_email='mhearne@usgs.gov',
       url='',
       packages=['lsprocess'],
-      scripts = ['secsample'],
+      scripts = ['secsample','lsprocess.py'],
 )
