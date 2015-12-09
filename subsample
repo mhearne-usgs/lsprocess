@@ -1,0 +1,102 @@
+#!/usr/bin/env python
+
+#stdlib imports
+import ConfigParser
+import sys
+import os.path
+
+#third party imports
+from mapio import shake,grid2d,gmt,gdal
+
+usage = '''Subsample grids based on a ShakeMap.  
+
+This program has one argument, the path to a config file in the format below.
+
+The [SHAKEMAP] section allows you to specify the file name and desired
+output layers from the shakemap.
+
+The [LAYERS] section allows you to specify the global files that
+should be cut and resampled to the ShakeMap extent and resolution.
+the layername_sample options allow you to specify the type of
+resampling that should be applied to each layer, one of nearest or
+linear (the default is nearest).
+
+The [OUTPUT] section allows you to specify the folder where the output
+GMT Netcdf format grids will be written, and the earthquake name that
+will appear in each file name.
+
+For example, a layer called "elev" for the earthquake called
+"northridge" would be given the name "northridge_elev.grd".
+
+Config Format:
+################################
+[SHAKEMAP]
+file = /path/to/grid.xml
+layers = mmi,pga,pgv 
+
+[LAYERS]
+glim = /path/to/glim_file
+glim_sample = nearest
+
+precip = /path/to/precip_file
+precip_sample = linear
+
+[OUTPUT]
+earthquake = northridge
+folder = /path/to/output_folder
+################################
+'''
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print usage
+        sys.exit(1)
+    configfile = sys.argv[1]
+    config = ConfigParser.RawConfigParser()
+    config.read(configfile)
+
+    shakefile = config.get('SHAKEMAP','file')
+    shakelayers = config.get('SHAKEMAP','layers').split(',')
+
+    default_interp = 'nearest'
+    params = config.options('LAYERS')
+
+    layerlist = []
+    
+    for param in params:
+        if param.find('_sample') < 0:
+            pfile = config.get('LAYERS',param)
+            psamplekey = param+'_sample'
+            if psamplekey in params:
+                psample = config.get('LAYERS',psamplekey)
+            else:
+                psample = default_interp
+            layerlist.append((pfile,psample,param))
+
+    outfolder = config.get('OUTPUT','folder')
+    eqname = config.get('OUTPUT','earthquake')
+    if not os.path.isdir(outfolder):
+        os.mkdir(outfolder)
+        
+    #load the ShakeMap and save the desired layers to GMT files
+    shakegrid = shake.ShakeGrid.load(shakefile)
+    for layer in shakelayers:
+        grid2d = shakegrid.getLayer(layer)
+        gmtgrid = gmt.GMTGrid.copyFromGrid(grid2d)
+        layerfile = os.path.join(outfolder,eqname+'_'+layer+'.grd')
+        print 'Saving %s...' % layerfile
+        gmtgrid.save(layerfile)
+        
+    shakedict = shakegrid.getGeoDict()
+    
+    for layerfile,layersample,layername in layerlist:
+        if gmt.GMTGrid.getFileType(layerfile) != 'unknown':
+            grid = gmt.GMTGrid.load(layerfile,preserve='shape',samplegeodict=shakedict,resample=True,method=layersample,doPadding=True)
+        else:
+            grid = gdal.GDALGrid.load(layerfile,preserve='shape',samplegeodict=shakedict,resample=True,method=layersample,doPadding=True)
+        gridfile = os.path.join(outfolder,eqname+'_'+layername+'.grd')
+        gmtgrid = gmt.GMTGrid.copyFromGrid(grid)
+        print 'Saving %s...' % gridfile
+        gmtgrid.save(gridfile)
+                        
+    
