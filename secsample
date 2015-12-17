@@ -164,27 +164,58 @@ if __name__ == '__main__':
 
     -------------------------------------------------------------------------------------------------------
     [SAMPLING]
-    coverage = /path/to/hazard_coverage/shapefile #required, must be in decimal degrees
-    dx = 10.0 #sampling resolution in meters, required
-    cb = 0.5  #forced hazard/no-hazard class balance, optional.  Number specifies the fraction of hazard pixels to sample
-    nmax = 1e9 #optional maximum number of possible yes/no sample points (usually set to avoid memory issues)
-    nsamp = 1e5 #optional number of total hazard and no-hazard sample points to collect.
-    testpercent = 0.5 #Fraction of sampled points to be used for testing (1-testpercent) fraction will be used for training. Optional, defaults to 0
-    extent = xmin,xmax,ymin,ymax OR convex #geographic extent within which to sample data.  Four numbers are interpreted as bounding box, the word convex will be interpreted to mean a convex hull.  Default (not specified) will mean the bounding box of the hazard coverage.
-    h1 = 100.0 #Minimum buffer size for sampling non-hazard points when input coverage takes the form of points.
-    h2 = 300.0 #Maximum buffer size for sampling non-hazard points when input coverage takes the form of points.
+    #required, must be in decimal degrees
+    coverage = /path/to/hazard_coverage/shapefile 
+
+    #sampling resolution in meters, required
+    dx = 10.0 
+
+    #forced hazard/no-hazard class balance, optional.  Number specifies the fraction of hazard pixels to sample
+    cb = 0.5  
+
+    #optional maximum number of possible yes/no sample points (usually set to avoid memory issues)
+    nmax = 10000 
+
+    #optional number of total hazard and no-hazard sample points to collect.
+    nsamp = 100000 
+
+    #Fraction of sampled points to be used for testing (1-testpercent) fraction will be used for training. Optional, defaults to 0
+    testpercent = 0.5 
+
+    #geographic extent within which to sample data.  Four numbers are
+    #interpreted as bounding box, the word convex will be interpreted
+    #to mean a convex hull.  Default (not specified) will mean the
+    #bounding box of the hazard coverage.
+    extent = xmin,xmax,ymin,ymax OR convex 
+
+    #Minimum buffer size for sampling non-hazard points when input coverage takes the form of points.
+    h1 = 100.0 
+
+    #Maximum buffer size for sampling non-hazard points when input coverage takes the form of points.
+    h2 = 300.0 
 
     [PREDICTORS]
-    layername = /path/to/predictor_grid/or/predictor_shapefile #inputs can be ESRI or GMT format grids, or shapefiles.  Must be in decimal degrees.
-    layername_sampling = nearest #optional grid sampling method (nearest or linear will be supported)
-    layername_attribute = attribute #required for shapefiles - the attribute of each shape to choose as sample.
+    #inputs can be ESRI or GMT format grids, or shapefiles.  Must be in decimal degrees.
+    layername = /path/to/predictor_grid/or/predictor_shapefile 
 
-    shakemap = /path/to/grid.xml #required parameters specifying path to ShakeMap input.  All ground motion values (mmi,pga,pgv,psa03,psa10,psa30) will be sampled.
-    shakemap_uncertainty = /path/to/uncertainty.xml #optional path to ShakeMap uncertainty grid.  All error columns corresponding to ground motions will be sampled.
+    #optional grid sampling method (nearest or linear will be supported)
+    layername_sampling = nearest 
+
+    #required for shapefiles - the attribute of each shape to choose as sample.
+    layername_attribute = attribute 
+
+    #required parameter specifying path to ShakeMap input.  All ground motion values (mmi,pga,pgv,psa03,psa10,psa30) will be sampled.
+    shakemap = /path/to/grid.xml 
+
+    #optional path to ShakeMap uncertainty grid.  All error columns corresponding to ground motions will be sampled.
+    shakemap_uncertainty = /path/to/uncertainty.xml 
 
     [OUTPUT]
-    folder = /path/to/desired/output/location #required, where all data frames, output plots, etc. will be written
-    basename = eqname #base name to assign to all output files (eqname_testing.dat, eqname_training.dat, etc.)
+    #required, where all data frames, output plots, etc. will be written
+    folder = /path/to/desired/output/location 
+
+    #base name to assign to all output files (eqname_testing.dat, eqname_training.dat, etc.)
+    basename = eqname 
     -------------------------------------------------------------------------------------------------------
     '''
     parser = argparse.ArgumentParser(description=usage,formatter_class=argparse.RawDescriptionHelpFormatter)

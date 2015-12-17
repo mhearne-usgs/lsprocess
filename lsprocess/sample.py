@@ -7,7 +7,7 @@ from collections import OrderedDict
 
 import numpy as np
 import fiona
-from shapely.geometry import Polygon,shape,MultiPoint,Point
+from shapely.geometry import Polygon,shape,MultiPoint,Point,mapping
 import matplotlib.pyplot as plt
 import pyproj
 import pandas as pd
@@ -16,6 +16,79 @@ from mapio.grid2d import Grid2D
 from mapio.gmt import GMTGrid
 from mapio.gdal import GDALGrid
 from mapio.shake import ShakeGrid
+from rasterio.transform import Affine
+import rasterio
+
+def getPointsInCircum(r,n=100,h=0,k=0):
+    #h = x coordinate of center
+    #k = y coordinate of center
+    #http://stackoverflow.com/questions/8487893/generate-all-the-points-on-the-circumference-of-a-circle
+    points = [(np.cos(2*np.pi/n*x)*r,np.sin(2*np.pi/n*x)*r) for x in xrange(0,n+1)]
+    x,y = zip(*points)
+    x = np.array(x)
+    y = np.array(y)
+    x += h
+    y += k
+    return (x,y)
+
+def createCirclePolygon(h,k,r,dx):
+    D = 10.0
+    theta = 2 * np.arccos((r-(dx/D))/r)
+    npoints = int(360.0/theta)
+    x,y = getPointsInCircum(r,n=npoints,h=h,k=k)
+    p = Polygon(zip(x,y))
+    return p
+
+def affine_from_corner(ulx, uly, dx, dy):
+    return Affine.translation(ulx, uly)*Affine.scale(dx, -dy)
+
+def getNoSampleGrid(yespoints,xvar,yvar,dx,h1,h2):
+    '''Return the grid from which "no" pixels can successfully be sampled.
+    :param yespoints:
+      Sequence of (x,y) points (meters) where landslide/liquefaction was observed.
+    :param xvar:
+      Numpy array of centers of columns of sampling grid.
+    :param yvar:
+      Numpy array of centers of rows of sampling grid.
+    :param dx:
+      Sampling resolution in x and y (meters).
+    :param h1:
+      Minimum buffer size for sampling non-hazard points.
+    :param h2:
+      Maximum buffer size for sampling non-hazard points.
+    :returns:
+      Grid of shape (len(yvar),len(xvar)) where 1's represent pixels from which 
+      "no" values can be sampled.
+    '''
+    shp = (len(xvar),len(yvar))
+    west = xvar.min() - dx/2.0 #??
+    north = yvar.max() + dx/2.0 #??
+    affine = affine_from_corner(west,north,dx,dx)
+    donuts = []
+    holes = []
+    for h,k in yespoints:
+        donut = createCirclePolygon(h,k,h2,dx)
+        hole = createCirclePolygon(h,k,h1,dx)
+        donuts.append(donut)
+        holes.append(hole)
+    donutburn = ((mapping(g), 1) for g in donuts)
+    holeburn = ((mapping(g), 2) for g in holes)
+    #we only want those pixels set where the polygon encloses the center point
+    alltouched = False 
+    donutimg = rasterio.features.rasterize(
+                donutburn,
+                out_shape=shp,
+                transform=affine,
+                all_touched=alltouched)
+    holeimg = rasterio.features.rasterize(
+                holeburn,
+                out_shape=shp,
+                transform=affine,
+                all_touched=alltouched)
+    holeimg[holeimg == 0] = 1
+    holeimg[holeimg == 2] = 0
+    sampleimg = np.bitwise_and(donutimg,holeimg)
+    return sampleimg
 
 def getFileType(filename):
     """
@@ -159,11 +232,11 @@ def getYesPoints(pshapes,proj,dx,nmax):
     else:
         yespoints = []
         for pshape in pshapes:
-            yespoints.append(pshape['geometry']['coordinates'])
+            yespoints.append(pshape.coords[0])
             
     return (np.array(yespoints),nrows,ncols,xvar,yvar,idx)
 
-def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=0.0,classBalance=None,extent=None,Nsamp=100):
+def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=0.0,classBalance=None,extent=None,Nsamp=100,h1=100.0,h2=300.0):
     """
     Sample yes/no test and training pixels from shapefile input.
     :param shapefile:
@@ -197,7 +270,9 @@ def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=0.0,classBalance=None
     
     f.close()
 
-    return sampleFromShapes(shapes,bounds,dx=dx,nmax=nmax,testPercent=testPercent,classBalance=classBalance,extent=extent,Nsamp=Nsamp)
+    return sampleFromShapes(shapes,bounds,dx=dx,nmax=nmax,testPercent=testPercent,
+                            classBalance=classBalance,extent=extent,Nsamp=Nsamp,
+                            h1=h1,h2=h2)
 
 def sampleYes(array,N):
     """
@@ -247,7 +322,7 @@ def sampleNo(xvar,yvar,N,avoididx):
 
     return (samples,newavoididx)
 
-def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalance=None,extent=None,Nsamp=100):
+def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalance=None,extent=None,Nsamp=100,h1=100.0,h2=300.0):
     """
     Sample yes/no test and training pixels from shapefile input.
     :param shapes:
@@ -289,32 +364,43 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
     #get the "yes" sample points
     yespoints,nrows,ncols,xvar,yvar,yesidx = getYesPoints(pshapes,proj,dx,nmax)
 
-    #what is the class balance (assuming polygons)
-    if classBalance is None:
-        classBalance = getClassBalance(pshapes,bounds,proj)
+    #Calculations of how many training and test points are the same for points and polygons.
+    #Also sampling of yes points is the same regardless of vector type
+    Nmesh = nrows*ncols
+    NyesTot = len(yespoints)
+    NnoTot = Nmesh - NyesTot
+    NyesSampTest = int(Nsamp * classBalance * testPercent)
+    NyesSampTrain = int(Nsamp * classBalance * (1-testPercent))
+    YesSampTot = NyesSampTest + NyesSampTrain
+    ratio = NyesTot/float(YesSampTot)
+    if YesSampTot > NyesTot:
+        raise Exception('Your total number of desired "yes" sample pixels is greater than the number available.')
+    NnoSampTest = int(Nsamp*(1-classBalance)*testPercent)
+    NnoSampTrain = int(Nsamp*(1-classBalance)*(1-testPercent))
+    NoSampTot = NnoSampTest + NnoSampTrain
+    if NoSampTot > NnoTot:
+        raise Exception('Your total number of desired "no" sample pixels is greater than the number available.')
+    YesTestPoints,RemainingYesPoints = sampleYes(yespoints,NyesSampTest)
+    YesTrainPoints,RemainingYesPoints = sampleYes(RemainingYesPoints,NyesSampTrain)
 
-    if extent is None: #we're using the default bounding box of the coverage data
-        Nmesh = nrows*ncols
-        NyesTot = len(yespoints)
-        NnoTot = Nmesh - NyesTot
-        NyesSampTest = int(Nsamp * classBalance * testPercent)
-        NyesSampTrain = int(Nsamp * classBalance * (1-testPercent))
-        YesSampTot = NyesSampTest + NyesSampTrain
-        ratio = NyesTot/float(YesSampTot)
-        if YesSampTot > NyesTot:
-            raise Exception('Your total number of desired "yes" sample pixels is greater than the number available.')
-        NnoSampTest = int(Nsamp*(1-classBalance)*testPercent)
-        NnoSampTrain = int(Nsamp*(1-classBalance)*(1-testPercent))
-        NoSampTot = NnoSampTest + NnoSampTrain
-        if NoSampTot > NnoTot:
-            raise Exception('Your total number of desired "no" sample pixels is greater than the number available.')
-        YesTestPoints,RemainingYesPoints = sampleYes(yespoints,NyesSampTest)
-        YesTrainPoints,RemainingYesPoints = sampleYes(RemainingYesPoints,NyesSampTrain)
-        
-        NoTestPoints,nosampleidx = sampleNo(xvar,yvar,NnoSampTest,yesidx)
-        NoTrainPoints,nosampleidx = sampleNo(xvar,yvar,NnoSampTrain,nosampleidx)
+    #Sampling of "no" points differs between points and polygons
+    if shptype == 'Point':
+        #for point data, create a boolean grid located on xvar/yvar
+        #create a donut around each pixel containing a yes point(s), where 1 is assigned to
+        #pixels more than h1 meters from yes point and less than h2 meters from yes point.
+        nosampleimg = getNoSampleGrid(yespoints,xvar,yvar,dx,h1,h2)
+        NoTestPoints,nosampleimg,sampleidx = sampleNoPoints(nosampleimg,NnoSampTest,xvar,yvar)
+        NoTrainPoints,nosampleimg,sampleidx = sampleNoPoints(nosampleimg,NnoSampTrain,xvar,yvar)
     else:
-        raise Exception('Custom extents not yet supported')  
+        #what is the class balance (assuming polygons)
+        if classBalance is None:
+            classBalance = getClassBalance(pshapes,bounds,proj)
+
+        if extent is None: #we're using the default bounding box of the coverage data
+            NoTestPoints,nosampleidx = sampleNo(xvar,yvar,NnoSampTest,yesidx)
+            NoTrainPoints,nosampleidx = sampleNo(xvar,yvar,NnoSampTrain,nosampleidx)
+        else:
+            raise Exception('Custom extents not yet supported')  
 
     #project all of the point data sets back to lat/lon
     YesTestPoints = projectBack(YesTestPoints,proj)
@@ -322,6 +408,39 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
     NoTestPoints = projectBack(NoTestPoints,proj)
     NoTrainPoints = projectBack(NoTrainPoints,proj)
     return (YesTestPoints,YesTrainPoints,NoTestPoints,NoTrainPoints,xvar,yvar,pshapes,proj)
+
+def sampleNoPoints(sampleimg,N,xvar,yvar):
+    '''Sample from our "no" sample grid, where that grid contains 1s where no pixels should be sampled from, and 0s where they should not.
+    :param sampleimg:
+      Grid of shape (len(yvar),len(xvar)) where 1's represent pixels from which 
+      "no" values can be sampled.
+    :param N:
+      Number of pixels to sample (without replacement from sampleimg.
+    :param xvar:
+      Numpy array of centers of columns of sampling grid.
+    :param yvar:
+      Numpy array of centers of rows of sampling grid.
+    :returns:
+      - nopoints sequence of x,y tuples representing "no" samples.
+      - Modified version of input sampleimg, with nopoints pixels set to 0.
+    '''
+    #get N points from sampleimg without replacement
+    #avoid nosampleidx indices
+    #return an sequence of X,Y tuples from those indices
+    npixels = len(xvar)*len(yvar)
+    allidx = np.arange(0,npixels)
+    sampleimg = sampleimg.flatten() #flatten out the input image
+    sampleidx = np.random.choice(allidx[sampleimg==1],size=N,replace=False)
+    sampleidx.sort()
+    sampleimg[sampleidx] = 0
+    sampleimg.shape = (len(yvar),len(xvar))
+    sampley,samplex = np.unravel_index(sampleidx,sampleimg.shape)
+    xp = xvar[samplex]
+    yp = yvar[sampley]
+    nopoints = zip(xp,yp)
+    return (nopoints,sampleimg,sampleidx)
+    
+    
 
 def projectBack(points,proj):
     """
@@ -615,7 +734,8 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
     h1 = sampleparams['h1']
     h2 = sampleparams['h2']
 
-    yestest,yestrain,notest,notrain,xvar,yvar,pshapes,proj = sampleFromFile(coverage,dx=dx,nmax=nmax,testPercent=testpercent,classBalance=cb,extent=extent,Nsamp=nsamp)
+    yestest,yestrain,notest,notrain,xvar,yvar,pshapes,proj = sampleFromFile(coverage,dx=dx,nmax=nmax,testPercent=testpercent,
+                                                                            classBalance=cb,extent=extent,Nsamp=nsamp,h1=h1,h2=h2)
 
     traincolumns = OrderedDict()
     testcolumns = OrderedDict()
