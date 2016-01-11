@@ -741,10 +741,10 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
     testcolumns = OrderedDict()
     traincolumns['lat'] = np.concatenate((yestrain[:,1],notrain[:,1]))
     traincolumns['lon'] = np.concatenate((yestrain[:,0],notrain[:,0]))
-    traincolumns['coverage'] = np.concatenate((np.ones_like(yestrain[:,1]),np.ones_like(notrain[:,1])))
+    traincolumns['coverage'] = np.concatenate((np.ones_like(yestrain[:,1]),np.zeros_like(notrain[:,1])))
     testcolumns['lat'] = np.concatenate((yestest[:,1],notest[:,1]))
     testcolumns['lon'] = np.concatenate((yestest[:,0],notest[:,0]))
-    testcolumns['coverage'] = np.concatenate((np.ones_like(yestest[:,1]),np.ones_like(notest[:,1])))
+    testcolumns['coverage'] = np.concatenate((np.ones_like(yestest[:,1]),np.zeros_like(notest[:,1])))
     
     
     for predname,predfile in predictors.iteritems():
