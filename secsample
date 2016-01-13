@@ -150,11 +150,20 @@ def main(args):
     basename = outparams['basename']
     trainfname = os.path.join(outfolder,basename+'_train.csv')
     testfname = os.path.join(outfolder,basename+'_test.csv')
-    print 'Saving training data set to %s' % trainfname
-    print 'Saving testing data set to %s' % trainfname
-    dftrain.to_csv(trainfname,columns=list(dftrain.columns))
-    dftest.to_csv(testfname,columns=list(dftrain.columns))
-        
+
+    mtrain,ntrain = dftrain.shape
+    if mtrain > 0:
+        print 'Saving training data set to %s' % trainfname
+        dftrain.to_csv(trainfname,columns=list(dftrain.columns))
+    else:
+        print 'No training data.'
+
+    mtest,ntest = dftest.shape
+    if mtest > 0:
+        print 'Saving testing data set to %s' % testfname
+        dftest.to_csv(testfname,columns=list(dftest.columns))
+    else:
+        print 'No test data.'
 
 if __name__ == '__main__':
     usage = '''Sample landslide/liquefaction coverage data (points or polygons) and any predictor variables, and create a dataframe suitable for 

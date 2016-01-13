@@ -739,12 +739,16 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
 
     traincolumns = OrderedDict()
     testcolumns = OrderedDict()
-    traincolumns['lat'] = np.concatenate((yestrain[:,1],notrain[:,1]))
-    traincolumns['lon'] = np.concatenate((yestrain[:,0],notrain[:,0]))
-    traincolumns['coverage'] = np.concatenate((np.ones_like(yestrain[:,1]),np.zeros_like(notrain[:,1])))
-    testcolumns['lat'] = np.concatenate((yestest[:,1],notest[:,1]))
-    testcolumns['lon'] = np.concatenate((yestest[:,0],notest[:,0]))
-    testcolumns['coverage'] = np.concatenate((np.ones_like(yestest[:,1]),np.zeros_like(notest[:,1])))
+
+    if (100-testpercent) > 0:
+        traincolumns['lat'] = np.concatenate((yestrain[:,1],notrain[:,1]))
+        traincolumns['lon'] = np.concatenate((yestrain[:,0],notrain[:,0]))
+        traincolumns['coverage'] = np.concatenate((np.ones_like(yestrain[:,1]),np.zeros_like(notrain[:,1])))
+
+    if testpercent > 0:
+        testcolumns['lat'] = np.concatenate((yestest[:,1],notest[:,1]))
+        testcolumns['lon'] = np.concatenate((yestest[:,0],notest[:,0]))
+        testcolumns['coverage'] = np.concatenate((np.ones_like(yestest[:,1]),np.zeros_like(notest[:,1])))
     
     
     for predname,predfile in predictors.iteritems():
@@ -762,12 +766,16 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
             method = 'nearest'
             if predictors.has_key(predname+'_sampling'):
                 method = predictors[predname+'_sampling']
-            yes_test_samples = sampleGridFile(predfile,yestest,method=method)
-            no_test_samples = sampleGridFile(predfile,notest,method=method)
-            yes_train_samples = sampleGridFile(predfile,yestrain,method=method)
-            no_train_samples = sampleGridFile(predfile,notrain,method=method)
-            testcolumns[predname] = np.concatenate((yes_test_samples,no_test_samples))
-            traincolumns[predname] = np.concatenate((yes_train_samples,no_train_samples))
+
+            if testpercent > 0:
+                yes_test_samples = sampleGridFile(predfile,yestest,method=method)
+                no_test_samples = sampleGridFile(predfile,notest,method=method)
+                testcolumns[predname] = np.concatenate((yes_test_samples,no_test_samples))
+
+            if (100-testpercent) > 0:
+                yes_train_samples = sampleGridFile(predfile,yestrain,method=method)
+                no_train_samples = sampleGridFile(predfile,notrain,method=method)
+                traincolumns[predname] = np.concatenate((yes_train_samples,no_train_samples))
         else:
             continue #attribute or sampling method key
 
