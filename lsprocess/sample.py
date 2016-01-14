@@ -353,13 +353,17 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
     shptype = shapes[0]['geometry']['type']
     if shptype not in ['Point','Polygon']:
         raise Exception('Only polygon and point data types supported!')
-    
-    if shptype != 'Polygon':
-        if classBalance is None:
-            raise Exception('Class balance *must* be selected when input data are points.')
 
     #Get the shapes projected into an orthographic projection centered on the data 
     pshapes,proj = getProjectedShapes(shapes,xmin,xmax,ymin,ymax)
+
+    if shptype != 'Polygon':
+        if classBalance is None:
+            raise Exception('Class balance *must* be selected when input data are points.')
+    else:
+        #what is the class balance (assuming polygons)
+        if classBalance is None:
+            classBalance = getClassBalance(pshapes,bounds,proj)
 
     #get the "yes" sample points
     yespoints,nrows,ncols,xvar,yvar,yesidx = getYesPoints(pshapes,proj,dx,nmax)
@@ -367,6 +371,12 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
     #Calculations of how many training and test points are the same for points and polygons.
     #Also sampling of yes points is the same regardless of vector type
     Nmesh = nrows*ncols
+
+    #Nsamp may not have been set - until we support custom extents by polygon, just assume that default Nsamp is = Nmesh
+    if Nsamp is None:
+        print 'Assuming total number of samples is the same as the number of pixels in sampling grid.  This may not work...'
+        Nsamp = Nmesh
+    
     NyesTot = len(yespoints)
     NnoTot = Nmesh - NyesTot
     NyesSampTest = int(Nsamp * classBalance * testPercent)
@@ -392,10 +402,6 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
         NoTestPoints,nosampleimg,sampleidx = sampleNoPoints(nosampleimg,NnoSampTest,xvar,yvar)
         NoTrainPoints,nosampleimg,sampleidx = sampleNoPoints(nosampleimg,NnoSampTrain,xvar,yvar)
     else:
-        #what is the class balance (assuming polygons)
-        if classBalance is None:
-            classBalance = getClassBalance(pshapes,bounds,proj)
-
         if extent is None: #we're using the default bounding box of the coverage data
             NoTestPoints,nosampleidx = sampleNo(xvar,yvar,NnoSampTest,yesidx)
             NoTrainPoints,nosampleidx = sampleNo(xvar,yvar,NnoSampTrain,nosampleidx)
