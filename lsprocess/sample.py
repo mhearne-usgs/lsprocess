@@ -16,6 +16,7 @@ from mapio.grid2d import Grid2D
 from mapio.gmt import GMTGrid
 from mapio.gdal import GDALGrid
 from mapio.shake import ShakeGrid
+from mapio.geodict import GeoDict
 from rasterio.transform import Affine
 import rasterio
 
@@ -640,7 +641,10 @@ def sampleGridFile(gridfile,xypoints,method='nearest'):
         fgeodict,xvar,yvar = GDALGrid.getFileGeoDict(gridfile)
     xdim,ydim = (fgeodict['xdim'],fgeodict['ydim'])
     try:
-        sdict = GMTGrid.fixGeoDict(bounds,xdim,ydim,-1,-1,preserve='dims')
+        sdict = GeoDict({'xmin':bounds[0],'xmax':bounds[1],
+                        'ymin':bounds[2],'ymax':bounds[3],
+                        'xdim':xdim,'ydim':ydim,
+                        'nrows':2,'ncols':2},preserve='dims')
     except:
         pass
     if gridtype == 'gmt':
@@ -679,7 +683,7 @@ def sampleFromShakeMap(shakefile,layer,xypoints):
     :returns:
       1D numpy array of grid values at each of input XY points.
     """
-    shakegrid = ShakeGrid.load(shakefile)
+    shakegrid = ShakeGrid.load(shakefile,fixFileGeoDict='corner')
     return sampleFromMultiGrid(shakegrid,layer,points)
 
 def sampleFromMultiGrid(multigrid,layer,xypoints):
@@ -787,7 +791,7 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
 
     #sample the shakemap
     layers = ['mmi','pga','pgv','psa03','psa10','psa30']
-    shakegrid = ShakeGrid.load(shakeparams['shakemap'])
+    shakegrid = ShakeGrid.load(shakeparams['shakemap'],fixFileGeoDict='corner')
     for layer in layers:
         yes_test_samples = sampleFromMultiGrid(shakegrid,layer,yestest)
         no_test_samples = sampleFromMultiGrid(shakegrid,layer,notest)
