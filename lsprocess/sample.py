@@ -630,21 +630,21 @@ def sampleGridFile(gridfile,xypoints,method='nearest'):
             pass
     if gridtype is None:
         raise Exception('File "%s" does not appear to be either a GMT grid or an ESRI grid.' % gridfile)
-    xmin = xmin - fdict['xdim']*3
-    xmax = xmax + fdict['xdim']*3
-    ymin = ymin - fdict['ydim']*3
-    ymax = ymax + fdict['ydim']*3
+    xmin = xmin - fdict['dx']*3
+    xmax = xmax + fdict['dx']*3
+    ymin = ymin - fdict['dy']*3
+    ymax = ymax + fdict['dy']*3
     bounds = (xmin,xmax,ymin,ymax)
     if gridtype == 'gmt':
         fgeodict = GMTGrid.getFileGeoDict(gridfile)
     else:
         fgeodict,xvar,yvar = GDALGrid.getFileGeoDict(gridfile)
-    xdim,ydim = (fgeodict['xdim'],fgeodict['ydim'])
+    dx,dy = (fgeodict['dx'],fgeodict['dy'])
     try:
         sdict = GeoDict({'xmin':bounds[0],'xmax':bounds[1],
                         'ymin':bounds[2],'ymax':bounds[3],
-                        'xdim':xdim,'ydim':ydim,
-                        'nrows':2,'ncols':2},preserve='dims')
+                        'dx':dx,'dy':dy,
+                        'ny':2,'nx':2},preserve='dims')
     except:
         pass
     if gridtype == 'gmt':
@@ -889,7 +889,7 @@ def _test_sample():
         idx += 1
     
     #make up a grid data set
-    geodict = {'xmin':33.5,'xmax':35.5,'ymin':33.5,'ymax':35.0,'xdim':0.5,'ydim':0.5,'nrows':4,'ncols':5}
+    geodict = {'xmin':33.5,'xmax':35.5,'ymin':33.5,'ymax':35.0,'dx':0.5,'dy':0.5,'ny':4,'nx':5}
     data = np.arange(0,20).reshape((4,5))
     grid = Grid2D(data,geodict)
     
