@@ -52,12 +52,12 @@ def validateSection(vdict,section,config):
         elif vtype == 'int':
             try:
                 value = int(value)
-            except ValueError,error:
+            except ValueError as error:
                 raise Exception('Input parameter %s needs to be an integer.' % key)
         elif vtype == 'float':
             try:
                 value = float(value)
-            except ValueError,error:
+            except ValueError as error:
                 raise Exception('Input parameter %s needs to be a float.' % key)
         else:
             pass

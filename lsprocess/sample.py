@@ -630,23 +630,17 @@ def sampleGridFile(gridfile,xypoints,method='nearest'):
             pass
     if gridtype is None:
         raise Exception('File "%s" does not appear to be either a GMT grid or an ESRI grid.' % gridfile)
-    xmin = xmin - fdict['dx']*3
-    xmax = xmax + fdict['dx']*3
-    ymin = ymin - fdict['dy']*3
-    ymax = ymax + fdict['dy']*3
+    xmin = xmin - fdict.dx*3
+    xmax = xmax + fdict.dx*3
+    ymin = ymin - fdict.dy*3
+    ymax = ymax + fdict.dy*3
     bounds = (xmin,xmax,ymin,ymax)
     if gridtype == 'gmt':
         fgeodict = GMTGrid.getFileGeoDict(gridfile)
     else:
         fgeodict,xvar,yvar = GDALGrid.getFileGeoDict(gridfile)
     dx,dy = (fgeodict['dx'],fgeodict['dy'])
-    try:
-        sdict = GeoDict({'xmin':bounds[0],'xmax':bounds[1],
-                        'ymin':bounds[2],'ymax':bounds[3],
-                        'dx':dx,'dy':dy,
-                        'ny':2,'nx':2},preserve='dims')
-    except:
-        pass
+    sdict = GeoDict.createDictFromBox(xmin,xmax,ymin,ymax,dx,dy)
     if gridtype == 'gmt':
         grid = GMTGrid.load(gridfile,samplegeodict=sdict,resample=False,method=method,doPadding=True)
     else:
@@ -791,7 +785,7 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
 
     #sample the shakemap
     layers = ['mmi','pga','pgv','psa03','psa10','psa30']
-    shakegrid = ShakeGrid.load(shakeparams['shakemap'],fixFileGeoDict='corner')
+    shakegrid = ShakeGrid.load(shakeparams['shakemap'],adjust='res')
     for layer in layers:
         yes_test_samples = sampleFromMultiGrid(shakegrid,layer,yestest)
         no_test_samples = sampleFromMultiGrid(shakegrid,layer,notest)
