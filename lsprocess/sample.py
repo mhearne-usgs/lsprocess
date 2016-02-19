@@ -416,6 +416,54 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
     NoTrainPoints = projectBack(NoTrainPoints,proj)
     return (YesTestPoints,YesTrainPoints,NoTestPoints,NoTrainPoints,xvar,yvar,pshapes,proj)
 
+
+def pointsFromShapes(shapes, bounds, dx=10.0, nmax=None):
+    """
+    Get yes/no points from shapefile input - same as sampleFromShapes but without class balance or separation of test and train, only samples in box enclosing the polygons
+    :param shapes:
+       Sequence of projected shapes.
+    :param bounds:
+        Tuple of xmin, ymin, xmax, ymax
+    :param dx:
+       resolution of sampling in X and Y (meters)
+    :param nmax:
+      if not None, maximum allowed number of mesh points in X and Y together (nrows*ncols).  Overrides dx.
+    :returns:
+      - sequence of coordinates in lat/lon for:
+         - YesPoints
+         - NoPoints
+      - numpy array of mesh column centers
+      - numpy array of mesh row centers
+      - PyProj object defining orthographic projection of xy points
+    """
+    xmin, ymin, xmax, ymax = bounds
+    shptype = shapes[0]['geometry']['type']
+    if shptype not in ['Polygon']:
+        raise Exception('Only polygon data types supported!')
+
+    #Get the shapes projected into an orthographic projection centered on the data
+    pshapes, proj = getProjectedShapes(shapes, xmin, xmax, ymin, ymax)
+
+    #get the "yes" sample points
+    yespoints, nrows, ncols, xvar, yvar, yesidx = getYesPoints(pshapes, proj, dx, nmax)
+
+    # sampleNo but with taking all of the points instead of just some of them randomly
+    allidx = np.arange(0, len(xvar)*len(yvar))  # flattened array of all indices in mesh
+    noidx = np.setxor1d(allidx, yesidx)  # allidx - avoididx
+    rowidx, colidx = np.unravel_index(noidx, (len(yvar), len(xvar)))
+    nopoints = []
+    for row, col in zip(rowidx, colidx):
+        xp = xvar[col]
+        yp = yvar[row]
+        nopoints.append((xp, yp))
+
+    #project all of the point data sets back to lat/lon
+    yespoints = projectBack(yespoints, proj)
+    nopoints = projectBack(nopoints, proj)
+
+    return (yespoints, nopoints, xvar, yvar, pshapes, proj)
+
+
 def sampleNoPoints(sampleimg,N,xvar,yvar):
     '''Sample from our "no" sample grid, where that grid contains 1s where no pixels should be sampled from, and 0s where they should not.
     :param sampleimg:
