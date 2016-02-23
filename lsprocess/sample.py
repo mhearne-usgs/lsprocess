@@ -19,6 +19,8 @@ from mapio.shake import ShakeGrid
 from mapio.geodict import GeoDict
 from rasterio.transform import Affine
 import rasterio
+import matplotlib.path as mplPath
+
 
 def getPointsInCircum(r,n=100,h=0,k=0):
     #h = x coordinate of center
@@ -161,7 +163,7 @@ def getYesPoints(pshapes,proj,dx,nmax):
     :param proj:
       PyProj projection object used to transform input shapes
     :param dx:
-      Float resolution of grid at which to sample points
+      Float resolution of grid at which to sample points, must be round number
     :param nmax:
       Threshold maximum number of points in total data mesh.
     :returns:
@@ -329,7 +331,7 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
     :param shapes:
        Sequence of projected shapes.
     :param dx:
-       resolution of sampling in X and Y (meters)
+       resolution of sampling in X and Y (meters), must be round number
     :param nmax:
       if not None, maximum allowed number of mesh points in X and Y together (nrows*ncols).  Overrides dx.
     :param testPercent:
@@ -417,17 +419,19 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
     return (YesTestPoints,YesTrainPoints,NoTestPoints,NoTrainPoints,xvar,yvar,pshapes,proj)
 
 
-def pointsFromShapes(shapes, bounds, dx=10.0, nmax=None):
+def pointsFromShapes(shapes, bounds, dx=10.0, nmax=None, Nsamp=None):
     """
     Get yes/no points from shapefile input - same as sampleFromShapes but without class balance or separation of test and train, only samples in box enclosing the polygons
     :param shapes:
        Sequence of projected shapes.
     :param bounds:
-        Tuple of xmin, ymin, xmax, ymax
+        Tuple of xmin, ymin, xmax, ymax, in lat/lon coordinates, only will accept points from within these bounds
     :param dx:
-       resolution of sampling in X and Y (meters)
+       resolution of sampling in X and Y (meters), must be a round number of meters
     :param nmax:
       if not None, maximum allowed number of mesh points in X and Y together (nrows*ncols).  Overrides dx.
+    :param Nsamp:
+      if not None, maximum number of total samples, keeps proportion of yes's and no's the same
     :returns:
       - sequence of coordinates in lat/lon for:
          - YesPoints
@@ -444,8 +448,20 @@ def pointsFromShapes(shapes, bounds, dx=10.0, nmax=None):
     #Get the shapes projected into an orthographic projection centered on the data
     pshapes, proj = getProjectedShapes(shapes, xmin, xmax, ymin, ymax)
 
+    # Get the projected bounds
+    project = partial(
+        pyproj.transform,
+        pyproj.Proj(proj='latlong', datum='WGS84'),
+        proj)
+    bbPoly = Polygon(((xmin, ymin), (xmin, ymax), (xmax, ymax), (xmax, ymin)))
+    bbPolyproj = transform(project, bbPoly)
+
+    if Nsamp is not None:  # Recompute dx, underestimate by dividing by 1.5 so later trimming doesn't reduce desired total
+        projbounds = bbPolyproj.bounds
+        dx = np.round(np.sqrt(((projbounds[2]-projbounds[0])*(projbounds[3]-projbounds[1]))/(Nsamp))/1.5)
+
     #get the "yes" sample points
-    yespoints, nrows, ncols, xvar, yvar, yesidx = getYesPoints(pshapes, proj, dx, nmax)
+    yespoints, nrows, ncols, xvar, yvar, yesidx = getYesPoints(pshapes, proj, dx, nmax=nmax)
 
     # sampleNo but with taking all of the points instead of just some of them randomly
     allidx = np.arange(0, len(xvar)*len(yvar))  # flattened array of all indices in mesh
@@ -456,6 +472,24 @@ def pointsFromShapes(shapes, bounds, dx=10.0, nmax=None):
         xp = xvar[col]
         yp = yvar[row]
         nopoints.append((xp, yp))
+    nopoints = np.array(nopoints)
+
+    # Only accept points inside the bounds
+    bbPath = mplPath.Path((zip(*np.array(bbPolyproj.exterior.coords.xy))))
+    yespoints = yespoints[bbPath.contains_points(yespoints)]
+    nopoints = nopoints[bbPath.contains_points(nopoints)]
+    totalpoints = (len(nopoints) + len(yespoints))
+
+    if Nsamp is not None and totalpoints > Nsamp:
+        ratioyes = float(len(yespoints))/totalpoints
+        keepy = np.round(ratioyes * Nsamp)
+        indy = np.random.randint(0, len(yespoints), size=keepy)
+        indn = np.random.randint(0, len(nopoints), size=Nsamp-keepy)
+        yespoints = yespoints[indy, :]
+        nopoints = nopoints[indn, :]
+
+    elif totalpoints < Nsamp:
+        print('Only collected %1.0f points out of desired %1.0f points due to bound restrictions' % (totalpoints, Nsamp))
 
     #project all of the point data sets back to lat/lon
     yespoints = projectBack(yespoints, proj)
@@ -467,7 +501,7 @@ def pointsFromShapes(shapes, bounds, dx=10.0, nmax=None):
 def sampleNoPoints(sampleimg,N,xvar,yvar):
     '''Sample from our "no" sample grid, where that grid contains 1s where no pixels should be sampled from, and 0s where they should not.
     :param sampleimg:
-      Grid of shape (len(yvar),len(xvar)) where 1's represent pixels from which 
+      Grid of shape (len(yvar),len(xvar)) where 1's represent pixels from which
       "no" values can be sampled.
     :param N:
       Number of pixels to sample (without replacement from sampleimg.
