@@ -112,7 +112,7 @@ def getFileType(filename):
             ftype = 'grid'
         except Exception,error:
             try:
-                fdict,xvar,yvar = GDALGrid.getFileGeoDict(filename)
+                fdict = GDALGrid.getFileGeoDict(filename)
                 ftype = 'grid'
             except:
                 pass
@@ -706,7 +706,7 @@ def sampleGridFile(gridfile,xypoints,method='nearest'):
         gridtype = 'gmt'
     except Exception,error:
         try:
-            fdict,xvar,yvar = GDALGrid.getFileGeoDict(gridfile)
+            fdict = GDALGrid.getFileGeoDict(gridfile)
             gridtype = 'esri'
         except:
             pass
@@ -720,8 +720,8 @@ def sampleGridFile(gridfile,xypoints,method='nearest'):
     if gridtype == 'gmt':
         fgeodict = GMTGrid.getFileGeoDict(gridfile)
     else:
-        fgeodict,xvar,yvar = GDALGrid.getFileGeoDict(gridfile)
-    dx,dy = (fgeodict['dx'],fgeodict['dy'])
+        fgeodict = GDALGrid.getFileGeoDict(gridfile)
+    dx,dy = (fgeodict.dx,fgeodict.dy)
     sdict = GeoDict.createDictFromBox(xmin,xmax,ymin,ymax,dx,dy)
     if gridtype == 'gmt':
         grid = GMTGrid.load(gridfile,samplegeodict=sdict,resample=False,method=method,doPadding=True)
@@ -846,8 +846,8 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
             no_test_samples = sampleShapes(shapes,notest,attribute)
             yes_train_samples = sampleShapes(shapes,yestrain,attribute)
             no_train_samples = sampleShapes(shapes,notrain,attribute)
-            testcolumns[predname] = np.concatenate((yes_test_samples,no_test_samples))
-            traincolumns[predname] = np.concatenate((yes_train_samples,no_train_samples))
+            testcolumns[predname] = np.squeeze(np.concatenate((yes_test_samples,no_test_samples)))
+            traincolumns[predname] = np.squeeze(np.concatenate((yes_train_samples,no_train_samples)))
         elif ftype == 'grid':
             method = 'nearest'
             if predictors.has_key(predname+'_sampling'):
@@ -856,12 +856,12 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
             if testpercent > 0:
                 yes_test_samples = sampleGridFile(predfile,yestest,method=method)
                 no_test_samples = sampleGridFile(predfile,notest,method=method)
-                testcolumns[predname] = np.concatenate((yes_test_samples,no_test_samples))
+                testcolumns[predname] = np.squeeze(np.concatenate((yes_test_samples,no_test_samples)))
 
             if (100-testpercent) > 0:
                 yes_train_samples = sampleGridFile(predfile,yestrain,method=method)
                 no_train_samples = sampleGridFile(predfile,notrain,method=method)
-                traincolumns[predname] = np.concatenate((yes_train_samples,no_train_samples))
+                traincolumns[predname] = np.squeeze(np.concatenate((yes_train_samples,no_train_samples)))
         else:
             continue #attribute or sampling method key
 
@@ -873,8 +873,10 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
         no_test_samples = sampleFromMultiGrid(shakegrid,layer,notest)
         yes_train_samples = sampleFromMultiGrid(shakegrid,layer,yestrain)
         no_train_samples = sampleFromMultiGrid(shakegrid,layer,notrain)
-        testcolumns[layer] = np.concatenate((yes_test_samples,no_test_samples))
-        traincolumns[layer] = np.concatenate((yes_train_samples,no_train_samples))
+        if testpercent > 0:
+            testcolumns[layer] = np.squeeze(np.concatenate((yes_test_samples,no_test_samples)))
+        if (100-testpercent) > 0:
+            traincolumns[layer] = np.squeeze(np.concatenate((yes_train_samples,no_train_samples)))
         
     dftest = pd.DataFrame(testcolumns)
     dftrain = pd.DataFrame(traincolumns)
