@@ -155,7 +155,16 @@ def getProjectedShapes(shapes,xmin,xmax,ymin,ymax):
 
     return (pshapes,proj)
 
-def getYesPoints(pshapes,proj,dx,nmax):
+def rasterizeShapes(pshapes,geodict):
+    outshape = (geodict.ny,geodict.nx)
+    txmin = geodict.xmin - geodict.dx/2.0
+    tymax = geodict.ymax + geodict.dy/2.0
+    transform = Affine.from_gdal(txmin,geodict.dx,0.0,tymax,0.0,-geodict.dy)
+    img = rasterio.features.rasterize(pshapes,out_shape=outshape,fill=0.0,transform=transform,
+                                      all_touched=True,default_value=1.0)
+    return img
+
+def getYesPoints(pshapes,proj,dx,nmax,touch_center=True):
     """
     Collect x/y coordinates of all points within hazard coverage polygons at desired resolution.
     :param pshapes:
@@ -166,6 +175,10 @@ def getYesPoints(pshapes,proj,dx,nmax):
       Float resolution of grid at which to sample points, must be round number
     :param nmax:
       Threshold maximum number of points in total data mesh.
+    :param touch_center:
+      Boolean indicating whether presence of polygon in each grid cell is enough to turn that
+      into a yes pixel.  Setting this to false presumes that the dx is relatively large, such
+      that creating a grid at that resolution will not tax the resources of the system.
     :returns:
       - numpy 2-D array of X/Y coordinates inside hazard polygons.
       - number of rows of resulting mesh
@@ -189,57 +202,70 @@ def getYesPoints(pshapes,proj,dx,nmax):
         if pymax > mymax:
             mymax = pymax
 
-    xvar = np.arange(mxmin,mxmax+dx,dx)
-    yvar = np.arange(mymin,mymax+dx,dx)
-    ncols = len(xvar)
-    nrows = len(yvar)
-    if nmax is not None:
-        if ncols*nrows > nmax:
-            aspect = ncols/nrows
-            ncols = np.sqrt(nmax*aspect)
-            nrows = nmax/ncols
-            ncols = int(ncols)
-            nrows = int(nrows)
-            #re-calculate dx here...
-            tdx = (mxmax-mxmin)/ncols
-            tdy = (mymax-mymin)/nrows
-            dx = np.max(tdx,tdy)
-            xvar = np.arange(mxmin,mxmax+dx,dx)
-            yvar = np.arange(mymin,mymax+dx,dx)
-
-    #Get the "yes" points to sample from
-    yespoints = []
-    idx = []
-    shapeidx = 0
-    if pshapes[0].type == 'Polygon':
-        #loop over shapes, projecting each one, then get the sample points
-        for pshape in pshapes:
-            if not shapeidx % 1000:
-                print 'Searching polygon %i of %i' % (shapeidx,len(pshapes))
-            shapeidx += 1
-            pxmin,pymin,pxmax,pymax = pshape.bounds
-            leftcol = np.where((pxmin - xvar) >= 0)[0].argmax()
-            rightcol = np.where((xvar - pxmax) >= 0)[0][0]
-            bottomrow = np.where((pymin - yvar) >= 0)[0].argmax()
-            toprow = np.where((yvar - pymax) >= 0)[0][0]
-            xp = np.arange(xvar[leftcol],xvar[rightcol]+dx,dx)
-            yp = np.arange(yvar[bottomrow],yvar[toprow]+dx,dx)
-            xmesh,ymesh = np.meshgrid(xp,yp)
-            xy = zip(xmesh.flatten(),ymesh.flatten())
-            for point in xy:
-                ix = np.where(xvar == point[0])[0][0]
-                iy = np.where(yvar == point[1])[0][0]
-                if pshape.contains(Point(point)):
-                    yespoints.append(point)
-                    idx.append(np.ravel_multi_index((iy,ix),(nrows,ncols),mode='raise',order='C'))
+    if not touch_center:
+        geodict = GeoDict.createDictFromBox(mxmin,mxmax,mymin,mymax,dx,dx)
+        img = rasterizeShapes(pshapes,geodict)
+        #now get the numpy array of x/y coordinates where covgrid == 1
+        idx = np.where(img == 1)[0]
+        x,y = np.unravel_index(idx,(geodict.ny,geodict.nx))
+        yespoints = zip(x.flatten(),y.flatten())
+        nrows = geodict.ny
+        ncols = geodict.nx
+        xvar = np.arange(geodict.xmin,geodict.xmax+geodict.dx,geodict.dx)
+        yvar = np.arange(geodict.ymin,geodict.ymax+geodict.dy,geodict.dy)
     else:
+        xvar = np.arange(mxmin,mxmax+dx,dx)
+        yvar = np.arange(mymin,mymax+dx,dx)
+        ncols = len(xvar)
+        nrows = len(yvar)
+        if nmax is not None:
+            if ncols*nrows > nmax:
+                aspect = ncols/nrows
+                ncols = np.sqrt(nmax*aspect)
+                nrows = nmax/ncols
+                ncols = int(ncols)
+                nrows = int(nrows)
+                #re-calculate dx here...
+                tdx = (mxmax-mxmin)/ncols
+                tdy = (mymax-mymin)/nrows
+                dx = np.max(tdx,tdy)
+                xvar = np.arange(mxmin,mxmax+dx,dx)
+                yvar = np.arange(mymin,mymax+dx,dx)
+
+        #Get the "yes" points to sample from
         yespoints = []
-        for pshape in pshapes:
-            yespoints.append(pshape.coords[0])
+        idx = []
+        shapeidx = 0
+        if pshapes[0].type == 'Polygon':
+            #loop over shapes, projecting each one, then get the sample points
+            for pshape in pshapes:
+                if not shapeidx % 1000:
+                    print 'Searching polygon %i of %i' % (shapeidx,len(pshapes))
+                shapeidx += 1
+                pxmin,pymin,pxmax,pymax = pshape.bounds
+                leftcol = np.where((pxmin - xvar) >= 0)[0].argmax()
+                rightcol = np.where((xvar - pxmax) >= 0)[0][0]
+                bottomrow = np.where((pymin - yvar) >= 0)[0].argmax()
+                toprow = np.where((yvar - pymax) >= 0)[0][0]
+                xp = np.arange(xvar[leftcol],xvar[rightcol]+dx,dx)
+                yp = np.arange(yvar[bottomrow],yvar[toprow]+dx,dx)
+                xmesh,ymesh = np.meshgrid(xp,yp)
+                xy = zip(xmesh.flatten(),ymesh.flatten())
+                for point in xy:
+                    ix = np.where(xvar == point[0])[0][0]
+                    iy = np.where(yvar == point[1])[0][0]
+                    if pshape.contains(Point(point)):
+                        yespoints.append(point)
+                        idx.append(np.ravel_multi_index((iy,ix),(nrows,ncols),mode='raise',order='C'))
+        else:
+            yespoints = []
+            for pshape in pshapes:
+                yespoints.append(pshape.coords[0])
             
     return (np.array(yespoints),nrows,ncols,xvar,yvar,idx)
 
-def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=0.0,classBalance=None,extent=None,Nsamp=100,h1=100.0,h2=300.0):
+def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=0.0,classBalance=None,extent=None,Nsamp=100,
+                   h1=100.0,h2=300.0,touch_center=True):
     """
     Sample yes/no test and training pixels from shapefile input.
     :param shapefile:
@@ -256,6 +282,8 @@ def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=0.0,classBalance=None
       If none, use the bounding box of the data in the shapefile. 
     :param Nsamp:
       Number of total (yes+no) sample points.
+    :param touch_center:
+      Boolean (0 or 1) indicating whether polygons must touch the center of the cell in order for that cell to count as a "yes" sample point.
     :returns:
       - sequence of XY coordinates for:
          - YesTestPoints
@@ -275,7 +303,7 @@ def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=0.0,classBalance=None
 
     return sampleFromShapes(shapes,bounds,dx=dx,nmax=nmax,testPercent=testPercent,
                             classBalance=classBalance,extent=extent,Nsamp=Nsamp,
-                            h1=h1,h2=h2)
+                            h1=h1,h2=h2,touch_center=touch_center)
 
 def sampleYes(array,N):
     """
@@ -325,7 +353,8 @@ def sampleNo(xvar,yvar,N,avoididx):
 
     return (samples,newavoididx)
 
-def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalance=None,extent=None,Nsamp=100,h1=100.0,h2=300.0):
+def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalance=None,extent=None,Nsamp=100,
+                     h1=100.0,h2=300.0,touch_center=True):
     """
     Sample yes/no test and training pixels from shapefile input.
     :param shapes:
@@ -342,6 +371,8 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
       If none, use the bounding box of the data in the shapefile. 
     :param Nsamp:
       Number of total (yes+no) sample points.
+    :param touch_center:
+      Boolean (0 or 1) indicating whether polygons must touch the center of the cell in order for that cell to count as a "yes" sample point.
     :returns:
       - sequence of XY coordinates for:
          - YesTestPoints
@@ -369,7 +400,7 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
             classBalance = getClassBalance(pshapes,bounds,proj)
 
     #get the "yes" sample points
-    yespoints,nrows,ncols,xvar,yvar,yesidx = getYesPoints(pshapes,proj,dx,nmax)
+    yespoints,nrows,ncols,xvar,yvar,yesidx = getYesPoints(pshapes,proj,dx,nmax,touch_center=touch_center)
 
     #Calculations of how many training and test points are the same for points and polygons.
     #Also sampling of yes points is the same regardless of vector type
@@ -461,7 +492,7 @@ def pointsFromShapes(shapes, bounds, dx=10.0, nmax=None, Nsamp=None):
         dx = np.round(np.sqrt(((projbounds[2]-projbounds[0])*(projbounds[3]-projbounds[1]))/(Nsamp))/1.5)
 
     #get the "yes" sample points
-    yespoints, nrows, ncols, xvar, yvar, yesidx = getYesPoints(pshapes, proj, dx, nmax=nmax)
+    yespoints, nrows, ncols, xvar, yvar, yesidx = getYesPoints(pshapes, proj, dx, nmax=nmax,touch_center=touch_center)
 
     # sampleNo but with taking all of the points instead of just some of them randomly
     allidx = np.arange(0, len(xvar)*len(yvar))  # flattened array of all indices in mesh
@@ -787,6 +818,7 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
         - cb: Desired class balance, i.e., fraction of sampled points that should be from hazard polygons. Optional for polygons, Required for points.
         - nmax: Maximum number of possible yes/no sample points (usually set to avoid memory issues). Optional.
         - nsamp: Number of total hazard and no-hazard sample points to collect.  Required.
+        - touch_center: Boolean (0 or 1) indicating whether polygons must touch the center of the cell in order for that cell to count as a "yes" sample point.
         - testpercent: Fraction of sampled points to be used for testing (1-testpercent) will be used for training. Optional, defaults to 0
         - extent: xmin,xmax,ymin,ymax OR convex #geographic extent within which to sample data.  Four numbers are interpreted as bounding box, the word convex will be interpreted to mean a convex hull.  Default (not specified) will mean the bounding box of the hazard coverage. Optional.
         - h1: Minimum buffer size for sampling non-hazard points when input coverage takes the form of points. Optional for polygons, required for points.
@@ -815,13 +847,15 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
     cb = sampleparams['cb']
     nmax = sampleparams['nmax']
     nsamp = sampleparams['nsamp']
+    touch_center = sampleparams['touch_center']
     testpercent = sampleparams['testpercent']
     extent = sampleparams['extent']
     h1 = sampleparams['h1']
     h2 = sampleparams['h2']
 
     yestest,yestrain,notest,notrain,xvar,yvar,pshapes,proj = sampleFromFile(coverage,dx=dx,nmax=nmax,testPercent=testpercent,
-                                                                            classBalance=cb,extent=extent,Nsamp=nsamp,h1=h1,h2=h2)
+                                                                            touch_center=touch_center,classBalance=cb,extent=extent,
+                                                                            Nsamp=nsamp,h1=h1,h2=h2)
 
     traincolumns = OrderedDict()
     testcolumns = OrderedDict()
