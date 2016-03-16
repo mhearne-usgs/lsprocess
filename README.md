@@ -95,6 +95,13 @@ cb = 0.5  #forced hazard/no-hazard class balance, optional.  Number specifies th
 nmax = 1e9 #optional maximum number of possible yes/no sample points (usually set to avoid memory issues)
 nsamp = 1e5 #optional number of total hazard and no-hazard sample points to collect.
 testpercent = 0.5 #Fraction of sampled points to be used for testing (1-testpercent) fraction will be used for training. Optional, defaults to 0
+
+#Optional Boolean (0 or 1) indicating whether presence of polygon in each grid cell is enough to turn that
+#into a yes pixel.  Setting this to 0 presumes that the dx is relatively large, such
+#that creating a grid at that resolution will not tax the resources of the system.
+#Set this to 1 if doing high-resolution sampling of data, 0 if coarse (i.e., grid cells of 1km).
+touch_center = 0 
+
 extent = xmin,xmax,ymin,ymax OR convex #geographic extent within which to sample data.  Four numbers are interpreted as bounding box, the word convex will be interpreted to mean a convex hull.  Default (not specified) will mean the bounding box of the hazard coverage.
 
 h1 = 100.0 #Minimum buffer size for sampling non-hazard points when input coverage takes the form of points.
