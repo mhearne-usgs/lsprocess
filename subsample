@@ -91,9 +91,9 @@ if __name__ == '__main__':
     
     for layerfile,layersample,layername in layerlist:
         if gmt.GMTGrid.getFileType(layerfile) != 'unknown':
-            grid = gmt.GMTGrid.load(layerfile,preserve='shape',samplegeodict=shakedict,resample=True,method=layersample,doPadding=True)
+            grid = gmt.GMTGrid.load(layerfile,samplegeodict=shakedict,resample=True,method=layersample,doPadding=True)
         else:
-            grid = gdal.GDALGrid.load(layerfile,preserve='shape',samplegeodict=shakedict,resample=True,method=layersample,doPadding=True)
+            grid = gdal.GDALGrid.load(layerfile,samplegeodict=shakedict,resample=True,method=layersample,doPadding=True)
         gridfile = os.path.join(outfolder,eqname+'_'+layername+'.grd')
         gmtgrid = gmt.GMTGrid.copyFromGrid(grid)
         print 'Saving %s...' % gridfile
