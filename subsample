@@ -79,7 +79,7 @@ if __name__ == '__main__':
         os.mkdir(outfolder)
         
     #load the ShakeMap and save the desired layers to GMT files
-    shakegrid = shake.ShakeGrid.load(shakefile)
+    shakegrid = shake.ShakeGrid.load(shakefile,adjust='res')
     for layer in shakelayers:
         grid2d = shakegrid.getLayer(layer)
         gmtgrid = gmt.GMTGrid.copyFromGrid(grid2d)
