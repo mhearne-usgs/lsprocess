@@ -202,6 +202,7 @@ def getYesPoints(pshapes,proj,dx,nmax,touch_center=True):
         if pymax > mymax:
             mymax = pymax
 
+    #
     if not touch_center:
         geodict = GeoDict.createDictFromBox(mxmin,mxmax,mymin,mymax,dx,dx)
         img = rasterizeShapes(pshapes,geodict)
@@ -211,6 +212,7 @@ def getYesPoints(pshapes,proj,dx,nmax,touch_center=True):
         yespoints = zip(x.flatten(),y.flatten())
         nrows = geodict.ny
         ncols = geodict.nx
+        #Create the sequence of column and row centers
         xvar = np.arange(geodict.xmin,geodict.xmax+geodict.dx,geodict.dx)
         yvar = np.arange(geodict.ymin,geodict.ymax+geodict.dy,geodict.dy)
     else:
@@ -228,11 +230,12 @@ def getYesPoints(pshapes,proj,dx,nmax,touch_center=True):
                 #re-calculate dx here...
                 tdx = (mxmax-mxmin)/ncols
                 tdy = (mymax-mymin)/nrows
-                dx = np.max(tdx,tdy)
+                dx = np.max([tdx,tdy])
                 xvar = np.arange(mxmin,mxmax+dx,dx)
                 yvar = np.arange(mymin,mymax+dx,dx)
 
         #Get the "yes" points to sample from
+        #here, we're in the situation
         yespoints = []
         idx = []
         shapeidx = 0
@@ -243,20 +246,35 @@ def getYesPoints(pshapes,proj,dx,nmax,touch_center=True):
                     print 'Searching polygon %i of %i' % (shapeidx,len(pshapes))
                 shapeidx += 1
                 pxmin,pymin,pxmax,pymax = pshape.bounds
-                leftcol = np.where((pxmin - xvar) >= 0)[0].argmax()
-                rightcol = np.where((xvar - pxmax) >= 0)[0][0]
-                bottomrow = np.where((pymin - yvar) >= 0)[0].argmax()
-                toprow = np.where((yvar - pymax) >= 0)[0][0]
+                leftcol = np.where((pxmin - xvar) >= 0)
+                rightcol = np.where((xvar - pxmax) >= 0)
+                if len(leftcol[0]) and len(rightcol[0]):
+                    leftcol = leftcol[0].argmax()
+                    rightcol = rightcol[0].argmax()
+
+                bottomrow = np.where((pymin - yvar) >= 0)
+                toprow = np.where((yvar - pymax) >= 0)
+                if len(bottomrow[0]) and len(toprow[0]):
+                    bottomrow = bottomrow[0].argmax()
+                    toprow = toprow[0][0]
+
                 xp = np.arange(xvar[leftcol],xvar[rightcol]+dx,dx)
                 yp = np.arange(yvar[bottomrow],yvar[toprow]+dx,dx)
                 xmesh,ymesh = np.meshgrid(xp,yp)
                 xy = zip(xmesh.flatten(),ymesh.flatten())
                 for point in xy:
-                    ix = np.where(xvar == point[0])[0][0]
-                    iy = np.where(yvar == point[1])[0][0]
-                    if pshape.contains(Point(point)):
-                        yespoints.append(point)
-                        idx.append(np.ravel_multi_index((iy,ix),(nrows,ncols),mode='raise',order='C'))
+                    ix = np.where(xvar == point[0])
+                    iy = np.where(yvar == point[1])
+                    if len(ix[0]) and len(iy[0]):
+                        ix = ix[0][0]
+                        try:
+                            iy = iy[0][0]
+                        except:
+                            foo = 1
+                        if pshape.contains(Point(point)):
+                            yespoints.append(point)
+                            idx.append(np.ravel_multi_index((iy,ix),(nrows,ncols),mode='raise',order='C'))
+                            
         else:
             yespoints = []
             for pshape in pshapes:
@@ -359,6 +377,8 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
     Sample yes/no test and training pixels from shapefile input.
     :param shapes:
        Sequence of projected shapes.
+    :param bounds:
+      Tuple of geographic boundaries (xmin,ymin,xmax,ymax).
     :param dx:
        resolution of sampling in X and Y (meters), must be round number
     :param nmax:
