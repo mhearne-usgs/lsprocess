@@ -1,6 +1,5 @@
 TODO
 ____
- - Handling point data sets
  - Handling custom data extents
  - Handling linear grid sampling method
 
@@ -14,56 +13,19 @@ PAGER Secondary Hazards Project.
 Installation and Dependencies
 -----------------------------
 
-This package depends on:
- * numpy, the fundamental package for scientific computing with Python. <a href="http://www.numpy.org/">http://www.numpy.org/</a>  
- * matplotlib, the fundamental plotting library for scientific python.
- * pandas, library providing high-performance, easy-to-use data structures and data analysis tools.
- * fiona, a Python library for reading/writing various vector data formats (shapefile)
- * shapely, a Python library for doing geometric operations on points and polygons.
- * pyproj, a module which supports geographic projections.
- * MapIO, a Python library for reading/writing various grid data formats (ShakeMap and GMT).
+Currently, to install the code and its dependencies requires use of git.
 
-The best way to install numpy, pandas, and matplotlib is to use one of the Python distributions described here:
+Do the following (If you already have Anaconda or Miniconda installed, skip steps #2-3):
 
-<a href="http://www.scipy.org/install.html">http://www.scipy.org/install.html</a>
-
-Anaconda and Enthought distributions have been successfully tested with lsprocess.
-
-Most of those distributions should include <em>pip</em>, a command line tool for installing and 
-managing Python packages.  You will use pip to install the other dependencies and smtools itself.  
- 
-You may need to open a new terminal window to ensure that the newly installed versions of python and pip
-are in your path.
-
-To install fiona and shapely:
-
-conda install fiona
-
-conda install shapely
-
-
-To install pyproj:
-
-pip install pyproj
-
-To install MapIO:
-
-pip install git+git://github.com/usgs/MapIO.git
-
-To install this package:
-
-pip install git+git://github.com/mhearne-usgs/lsprocess.git
-
-Uninstalling and Updating
--------------------------
-
-To uninstall:
-
-pip uninstall lsprocess
-
-To update:
-
-pip install -U git+git://github.com/mhearne-usgs/lsprocess.git
+  1. git clone https://github.com/mhearne-usgs/lsprocess
+  2. curl -O https://repo.continuum.io/miniconda/Miniconda2-latest-MacOSX-x86_64.sh
+  3. sh Miniconda2-latest-MacOSX-x86_64.sh
+  4. cd losspager
+  6. source deactivate #this turns off any current virtual environments you may have configured
+  5. ./setup_env.sh
+  6. source activate pysample
+  6. cd ..
+  7. pip install lsprocess/
 
 Usage:
 ---------------------

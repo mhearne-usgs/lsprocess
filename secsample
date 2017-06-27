@@ -2,7 +2,7 @@
 
 #stdlib imports
 import sys
-import ConfigParser
+import configparser
 import os.path
 import argparse
 from functools import partial
@@ -35,7 +35,7 @@ OUTPUT = {'folder':('folder','required'),
 
 def validateSection(vdict,section,config):
     params = {}
-    for key,info in vdict.iteritems():
+    for key,info in vdict.items():
         vtype,vreq = info
         if vreq == 'required' and not config.has_option(section,key):
             raise Exception('Missing required %s parameter "%s" in config file.' % (section,key))
@@ -67,7 +67,7 @@ def validateSection(vdict,section,config):
     #go through the remaining keys in the section and stuff them as strings into another dictionary
     suppl = {}
     for key in config.options(section):
-        if key in vdict.keys():
+        if key in list(vdict.keys()):
             continue
         suppl[key] = config.get(section,key)
 
@@ -75,7 +75,7 @@ def validateSection(vdict,section,config):
 
 def main(args):
     if args.check:
-        config = ConfigParser.ConfigParser()
+        config = configparser.ConfigParser()
         config.readfp(open(args.config))
         shapefile = config.get('SAMPLING','coverage')
         dx = float(config.get('SAMPLING','dx'))
@@ -110,20 +110,20 @@ def main(args):
         else:
             cb = None
 
-        print 'At a resolution of %.1f meters, the input shapefile %s would have:' % (dx,shapefile)
-        print '\t%s rows' % format(nrows,",")
-        print '\t%s columns' % format(ncols,",d")
-        print '\t%s total possible samples' % format(nrows*ncols,",d")
+        print('At a resolution of %.1f meters, the input shapefile %s would have:' % (dx,shapefile))
+        print('\t%s rows' % format(nrows,","))
+        print('\t%s columns' % format(ncols,",d"))
+        print('\t%s total possible samples' % format(nrows*ncols,",d"))
         if cb is not None:
-            print '\tA class balance of %.2f%% hazard pixels' % (cb*100)
+            print('\tA class balance of %.2f%% hazard pixels' % (cb*100))
             hazpixels = int(cb*nrows*ncols)
             maxsamples = int((hazpixels)/cb)
-            print '\tEstimated number of hazard pixels: %s' % format(hazpixels,",d")
-            print '\tEstimated upper bound for nsamp: %s' % format(maxsamples,",d")
+            print('\tEstimated number of hazard pixels: %s' % format(hazpixels,",d"))
+            print('\tEstimated upper bound for nsamp: %s' % format(maxsamples,",d"))
         sys.exit(0)
     
     REQSECTIONS = ['SAMPLING','PREDICTORS','OUTPUT']
-    config = ConfigParser.ConfigParser()
+    config = configparser.ConfigParser()
     config.readfp(open(args.config))
     for section in REQSECTIONS:
         if section not in config.sections():
@@ -133,7 +133,7 @@ def main(args):
     outparams,suppl = validateSection(OUTPUT,'OUTPUT',config)
 
     #test the things that are presumably predictor variable files
-    for key,value in predictors.iteritems():
+    for key,value in predictors.items():
         likelyfile = (key.find('sampling') < 0) and (key.find('attribute') < 0)
         if likelyfile:
             if not os.path.isfile(value):
@@ -154,17 +154,17 @@ def main(args):
 
     mtrain,ntrain = dftrain.shape
     if mtrain > 0:
-        print 'Saving training data set to %s' % trainfname
+        print('Saving training data set to %s' % trainfname)
         dftrain.to_csv(trainfname,columns=list(dftrain.columns))
     else:
-        print 'No training data.'
+        print('No training data.')
 
     mtest,ntest = dftest.shape
     if mtest > 0:
-        print 'Saving testing data set to %s' % testfname
+        print('Saving testing data set to %s' % testfname)
         dftest.to_csv(testfname,columns=list(dftest.columns))
     else:
-        print 'No test data.'
+        print('No test data.')
 
 if __name__ == '__main__':
     usage = '''Sample landslide/liquefaction coverage data (points or polygons) and any predictor variables, and create a dataframe suitable for 

@@ -9,7 +9,7 @@ from mpl_toolkits.basemap import shapefile
 
 def main(args):
     if not os.path.isfile(args.xyfile):
-        raise Exception,'%s is not a valid file!' % args.xyfile
+        raise Exception('%s is not a valid file!' % args.xyfile)
     fpath,fext = os.path.splitext(args.xyfile)
     #need to implement writer in shapefile object or just use joel lawheads code directly...
     writer = shapefile.Writer(shapefile.POINT)

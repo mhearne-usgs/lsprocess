@@ -4,7 +4,7 @@
 import sys
 import os.path
 import argparse
-import ConfigParser
+import configparser
 
 #third party
 import numpy as np
@@ -25,10 +25,10 @@ def getFileResolution(gridfile):
     if gridfile.endswith('grd'):
         cdf = netcdf.netcdf_file(gridfile)
         xvarname = None
-        if 'x' in cdf.variables.keys():
+        if 'x' in list(cdf.variables.keys()):
             xvarname = 'x'
             yvarname = 'y'
-        elif 'lon' in cdf.variables.keys():
+        elif 'lon' in list(cdf.variables.keys()):
             xvarname = 'lon'
             yvarname = 'lat'
         if xvarname is not None: #at least two forms of COARDS-compliant netcdf files...
@@ -42,7 +42,7 @@ def getFileResolution(gridfile):
             isXConsistent = np.abs(1 - np.max(dx)/np.min(dx)) < 0.01
             isYConsistent = np.abs(1 - np.max(dx)/np.min(dx)) < 0.01
             if not isXConsistent or not isYConsistent:
-                raise Exception,'X or Y cell dimensions are not consistent!'
+                raise Exception('X or Y cell dimensions are not consistent!')
 
             #assign x/y resolution
             xdim = np.mean(dx)
@@ -116,11 +116,11 @@ def makeCoverageGrid(covshp,geodict):
 
 def parseEvent(eventfile):
     reqsections = ['COVERAGE','PREDICTORS','ATTRIBUTES','OUTPUT']
-    config = ConfigParser.RawConfigParser()
+    config = configparser.RawConfigParser()
     config.read(eventfile)
     sections = config.sections()
     if not set(reqsections) <= set(sections): #is at least every required section present?
-        raise Exception,'Incomplete config file - must have the following sections defined: %s' % str(reqoptions)
+        raise Exception('Incomplete config file - must have the following sections defined: %s' % str(reqoptions))
     missing = []
     covdict = {}
     fname = config.get('COVERAGE','coverage')
@@ -152,7 +152,7 @@ def parseEvent(eventfile):
         covdict['resolution'] = float(config.get('COVERAGE','resolution'))
         
     predictors = dict(config.items('PREDICTORS'))
-    for pgrid in predictors.values():
+    for pgrid in list(predictors.values()):
         if pgrid.find('_projstr') > -1 or pgrid.find('_format') > -1:
             continue
         if not os.path.isfile(pgrid):
@@ -163,18 +163,18 @@ def parseEvent(eventfile):
         errstr = 'You must define a set of attributes for every predictor variable.'
         if len(missing):
             errstr += 'Also, the following files do not exist: %s' % str(missing)
-        raise Exception,errstr
-    for key,value in predictors.iteritems():
+        raise Exception(errstr)
+    for key,value in predictors.items():
         attlist = config.get('ATTRIBUTES',key).split(',')
         predictors[key] = (value,attlist)
 
     if 'name' not in config.options('OUTPUT'):
-        raise Exception,'Missing "name" field in OUTPUT section'
+        raise Exception('Missing "name" field in OUTPUT section')
     ename = config.get('OUTPUT','name')
     return (covdict,predictors,ename)    
 
 def readConfig(configfile):
-    config = ConfigParser.RawConfigParser()
+    config = configparser.RawConfigParser()
     config.read(configfile)
     global_grids = dict(config.items('GRIDS'))
     outfolder = config.get('OUTPUT','folder')
@@ -185,9 +185,9 @@ def main(args):
     configfile = os.path.join(os.path.expanduser('~'),'.lsprocess','lsprocess.cfg')
     hasconfig = os.path.isfile(configfile)
     if not hasconfig:
-        print
-        print 'No config file "%s" found.' % configfile
-        print
+        print()
+        print('No config file "%s" found.' % configfile)
+        print()
         sys.exit(1)
     global_grids,outfolder = readConfig(configfile) #returns a dictionary just like global_config above
     
@@ -195,9 +195,9 @@ def main(args):
     #read in event specific grid file
     try:
         covdict,predictors,ename = parseEvent(args.eventfile)
-    except Exception,msg:
-        print 'There is something wrong with your event file.  See errors below.'
-        print msg
+    except Exception as msg:
+        print('There is something wrong with your event file.  See errors below.')
+        print(msg)
         sys.exit(1)
     
     #construct output folder from global/event configs
@@ -208,7 +208,7 @@ def main(args):
     #look for bounding box and resolution in event config file, or get from shakemap
     bbox = None
     shakemap = ShakeGrid(predictors['shakemap'][0],'MMI')
-    if covdict.has_key('bbox'):
+    if 'bbox' in covdict:
         bbox = covdict['bbox']
     else:
         #bbox = shakemap.getRange()
@@ -217,7 +217,7 @@ def main(args):
             tbbox = src.bounds
             bbox = (tbbox[0],tbbox[2],tbbox[1],tbbox[3])
             
-    if covdict.has_key('resolution'):
+    if 'resolution' in covdict:
         resolution = covdict['resolution']
     else:
         resolution = shakemap.getGeoDict()['xdim']
@@ -248,10 +248,10 @@ def main(args):
     
     #rasterize projected coverage defined bounding box and resolution
     shpfile = covdict['filename']
-    print 'Creating coverage grid...'
+    print('Creating coverage grid...')
     covgrid = makeCoverageGrid(shpfile,geodict)
     outgridfile = os.path.join(outfolder,'coverage.grd')
-    print 'Saving coverage to %s...' % outgridfile
+    print('Saving coverage to %s...' % outgridfile)
     covgrid.save(outgridfile)
 
     #make a grid of lat,lon values
@@ -277,21 +277,21 @@ def main(args):
         gmtshake.geodict = shakemap.geodict
         gmtshake.griddata = shakemap.griddata
         outshakefile = os.path.join(outfolder,'%s.grd' % var)
-        print 'Saving %s to %s...' % (var,outshakefile)
+        print('Saving %s to %s...' % (var,outshakefile))
         gmtshake.save(outshakefile)
         vardict[var] = gmtshake.griddata.flatten()
         
     #write netcdf versions of coverage, shakemap, and global grids to output folder
-    for gridname,gridfile in global_grids.iteritems():
+    for gridname,gridfile in global_grids.items():
         if not os.path.isfile(gridfile):
             pass
         try:
             grid = sampleGrid(gridfile,geodict)
-        except Exception,e:
-            print 'There was an error while sampling the "%s" grid "%s". - "%s"' % (gridname,gridfile,str(e))
+        except Exception as e:
+            print('There was an error while sampling the "%s" grid "%s". - "%s"' % (gridname,gridfile,str(e)))
             
         outgridfile = os.path.join(outfolder,gridname+'.grd')
-        print 'Saving %s to %s...' % (gridname,outgridfile)
+        print('Saving %s to %s...' % (gridname,outgridfile))
         grid.save(outgridfile)
         vardict[gridname] = grid.griddata.flatten()
         
@@ -303,7 +303,7 @@ def main(args):
         outmat[:,i] = vardict[col]
     colidx = i+1
     colnames = []
-    for col,column in vardict.iteritems():
+    for col,column in vardict.items():
         if col in firstcols:
             continue
         outmat[:,colidx] = vardict[col]
@@ -313,7 +313,7 @@ def main(args):
     colnames = firstcols + colnames
     m,n = outmat.shape
     datfile = os.path.join(outfolder,'%s.dat' % ename)
-    print 'Saving all variables to data file %s...' % datfile
+    print('Saving all variables to data file %s...' % datfile)
     f = open(datfile,'wt')
     f.write(','.join(colnames)+'\n')
     for i in range(0,m):

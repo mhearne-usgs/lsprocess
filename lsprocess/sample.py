@@ -26,8 +26,8 @@ def getPointsInCircum(r,n=100,h=0,k=0):
     #h = x coordinate of center
     #k = y coordinate of center
     #http://stackoverflow.com/questions/8487893/generate-all-the-points-on-the-circumference-of-a-circle
-    points = [(np.cos(2*np.pi/n*x)*r,np.sin(2*np.pi/n*x)*r) for x in xrange(0,n+1)]
-    x,y = zip(*points)
+    points = [(np.cos(2*np.pi/n*x)*r,np.sin(2*np.pi/n*x)*r) for x in range(0,n+1)]
+    x,y = list(zip(*points))
     x = np.array(x)
     y = np.array(y)
     x += h
@@ -39,13 +39,13 @@ def createCirclePolygon(h,k,r,dx):
     theta = 2 * np.arccos((r-(dx/D))/r)
     npoints = int(360.0/theta)
     x,y = getPointsInCircum(r,n=npoints,h=h,k=k)
-    p = Polygon(zip(x,y))
+    p = Polygon(list(zip(x,y)))
     return p
 
 def affine_from_corner(ulx, uly, dx, dy):
     return Affine.translation(ulx, uly)*Affine.scale(dx, -dy)
 
-def getNoSampleGrid(yespoints,xvar,yvar,dx,h1,h2):
+def getNoSampleGrid(yespoints,xvar,yvar,dx,h1,h2,nodatagrid,proj):
     '''Return the grid from which "no" pixels can successfully be sampled.
     :param yespoints:
       Sequence of (x,y) points (meters) where landslide/liquefaction was observed.
@@ -59,11 +59,13 @@ def getNoSampleGrid(yespoints,xvar,yvar,dx,h1,h2):
       Minimum buffer size for sampling non-hazard points.
     :param h2:
       Maximum buffer size for sampling non-hazard points.
+    :param nodatagrid:
+      Grid2D object containing 1s where any input predictor data had NaN values. 
     :returns:
       Grid of shape (len(yvar),len(xvar)) where 1's represent pixels from which 
       "no" values can be sampled.
     '''
-    shp = (len(xvar),len(yvar))
+    shp = (len(yvar),len(xvar))
     west = xvar.min() - dx/2.0 #??
     north = yvar.max() + dx/2.0 #??
     affine = affine_from_corner(west,north,dx,dx)
@@ -91,6 +93,26 @@ def getNoSampleGrid(yespoints,xvar,yvar,dx,h1,h2):
     holeimg[holeimg == 0] = 1
     holeimg[holeimg == 2] = 0
     sampleimg = np.bitwise_and(donutimg,holeimg)
+
+    #check all of the 1 pixels and make sure the nodatagrid array has a 0 at each of those locations
+    #first find all rows/cols in sampleimg == 1
+    rows,cols = np.where(sampleimg == 1)
+
+    #get the projected x,y coordinates of these rows/cols 
+    x = xvar[cols]
+    y = yvar[rows]
+    xy = np.zeros((len(x),2))
+    xy[:,0] = x
+    xy[:,1] = y
+    #get the lat/lon values of those projected XY coordinates
+    latlon = projectBack(xy,proj)
+    #check those coordinates against our nan grid - wherever it has a 1, we don't want a "no" sample.
+    latlonvalues = nodatagrid.getValue(latlon[:,1],latlon[:,0],default=np.nan)
+    rows = rows[latlonvalues == 0]
+    cols = cols[latlonvalues == 0]
+    sampleimg[rows,cols] = 0
+    
+    
     return sampleimg
 
 def getFileType(filename):
@@ -110,7 +132,7 @@ def getFileType(filename):
         try:
             fdict = GMTGrid.getFileGeoDict(filename)
             ftype = 'grid'
-        except Exception,error:
+        except Exception as error:
             try:
                 fdict = GDALGrid.getFileGeoDict(filename)
                 ftype = 'grid'
@@ -209,7 +231,7 @@ def getYesPoints(pshapes,proj,dx,nmax,touch_center=True):
         #now get the numpy array of x/y coordinates where covgrid == 1
         idx = np.where(img == 1)[0]
         x,y = np.unravel_index(idx,(geodict.ny,geodict.nx))
-        yespoints = zip(x.flatten(),y.flatten())
+        yespoints = list(zip(x.flatten(),y.flatten()))
         nrows = geodict.ny
         ncols = geodict.nx
         #Create the sequence of column and row centers
@@ -243,7 +265,7 @@ def getYesPoints(pshapes,proj,dx,nmax,touch_center=True):
             #loop over shapes, projecting each one, then get the sample points
             for pshape in pshapes:
                 if not shapeidx % 1000:
-                    print 'Searching polygon %i of %i' % (shapeidx,len(pshapes))
+                    print('Searching polygon %i of %i' % (shapeidx,len(pshapes)))
                 shapeidx += 1
                 pxmin,pymin,pxmax,pymax = pshape.bounds
                 leftcol = np.where((pxmin - xvar) >= 0)
@@ -261,7 +283,7 @@ def getYesPoints(pshapes,proj,dx,nmax,touch_center=True):
                 xp = np.arange(xvar[leftcol],xvar[rightcol]+dx,dx)
                 yp = np.arange(yvar[bottomrow],yvar[toprow]+dx,dx)
                 xmesh,ymesh = np.meshgrid(xp,yp)
-                xy = zip(xmesh.flatten(),ymesh.flatten())
+                xy = list(zip(xmesh.flatten(),ymesh.flatten()))
                 for point in xy:
                     ix = np.where(xvar == point[0])
                     iy = np.where(yvar == point[1])
@@ -282,12 +304,17 @@ def getYesPoints(pshapes,proj,dx,nmax,touch_center=True):
             
     return (np.array(yespoints),nrows,ncols,xvar,yvar,idx)
 
-def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=0.0,classBalance=None,extent=None,Nsamp=100,
+def sampleFromFile(shapefile,predictors,dx=10.0,nmax=None,testPercent=0.0,classBalance=None,extent=None,Nsamp=100,
                    h1=100.0,h2=300.0,touch_center=True):
     """
     Sample yes/no test and training pixels from shapefile input.
     :param shapefile:
        path to shapefile, presumed to be decimal degrees.
+    :param predictors:
+      Dictionary with at least these values:
+        - layername: Path to ESRI shapefile, or grid in GMT or ESRI format which represents predictor data. Required.
+        - layername_sampling: 'nearest' or 'linear', optional for grids, not used for shapefiles.
+        - layername_attribute: Name of attribute in shapefile which should be sampled at hazard/non-hazard points.  Required for points.
     :param dx:
        resolution of sampling in X and Y (meters)
     :param nmax:
@@ -319,7 +346,7 @@ def sampleFromFile(shapefile,dx=10.0,nmax=None,testPercent=0.0,classBalance=None
     
     f.close()
 
-    return sampleFromShapes(shapes,bounds,dx=dx,nmax=nmax,testPercent=testPercent,
+    return sampleFromShapes(shapes,bounds,predictors,dx=dx,nmax=nmax,testPercent=testPercent,
                             classBalance=classBalance,extent=extent,Nsamp=Nsamp,
                             h1=h1,h2=h2,touch_center=touch_center)
 
@@ -342,7 +369,7 @@ def sampleYes(array,N):
     notsampled = array[nosampleidx,:]
     return (sampled,notsampled)
 
-def sampleNo(xvar,yvar,N,avoididx):
+def sampleNo(xvar,yvar,N,avoididx,nodatagrid,proj):
     """
     Sample from pixels in mesh, excluding yes pixels and already sampled no pixels.
     :param xvar:
@@ -369,9 +396,17 @@ def sampleNo(xvar,yvar,N,avoididx):
         yp = yvar[row]
         samples.append((xp,yp))
 
+    #compare these sample points against the nodatagrid
+    samples = np.array(samples)
+    nolatlon = projectBack(samples,proj)
+    novalue = nodatagrid.getValue(nolatlon[:,1],nolatlon[:,0],default=np.nan)
+    samples = samples[novalue == 0]
+    inan = np.where(novalue == 1)[0]
+    newavoididx = np.sort(np.hstack((newavoididx,inan)))
+    samples = samples.tolist()
     return (samples,newavoididx)
 
-def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalance=None,extent=None,Nsamp=100,
+def sampleFromShapes(shapes,bounds,predictors,dx=10.0,nmax=None,testPercent=1.0,classBalance=None,extent=None,Nsamp=100,
                      h1=100.0,h2=300.0,touch_center=True):
     """
     Sample yes/no test and training pixels from shapefile input.
@@ -379,6 +414,11 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
        Sequence of projected shapes.
     :param bounds:
       Tuple of geographic boundaries (xmin,ymin,xmax,ymax).
+    :param predictors:
+      Dictionary with at least these values:
+        - layername: Path to ESRI shapefile, or grid in GMT or ESRI format which represents predictor data. Required.
+        - layername_sampling: 'nearest' or 'linear', optional for grids, not used for shapefiles.
+        - layername_attribute: Name of attribute in shapefile which should be sampled at hazard/non-hazard points.  Required for points.
     :param dx:
        resolution of sampling in X and Y (meters), must be round number
     :param nmax:
@@ -422,13 +462,22 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
     #get the "yes" sample points
     yespoints,nrows,ncols,xvar,yvar,yesidx = getYesPoints(pshapes,proj,dx,nmax,touch_center=touch_center)
 
+    #get the grid containing 1 in cells where any predictor has NaN.
+    nodatagrid = getNoDataGrid(predictors,xmin,xmax,ymin,ymax)
+
+    #filter out yespoints that are in any cells with NaN values in predictors
+    if len(yespoints):
+        yeslatlon = projectBack(yespoints,proj)
+        yesvalue = nodatagrid.getValue(yeslatlon[:,1],yeslatlon[:,0],default=np.nan)
+        yespoints = yespoints[yesvalue == 0]
+    
     #Calculations of how many training and test points are the same for points and polygons.
     #Also sampling of yes points is the same regardless of vector type
     Nmesh = nrows*ncols
 
     #Nsamp may not have been set - until we support custom extents by polygon, just assume that default Nsamp is = Nmesh
     if Nsamp is None:
-        print 'Assuming total number of samples is the same as the number of pixels in sampling grid.  This may not work...'
+        print('Assuming total number of samples is the same as the number of pixels in sampling grid.  This may not work...')
         Nsamp = Nmesh
     
     NyesTot = len(yespoints)
@@ -452,13 +501,16 @@ def sampleFromShapes(shapes,bounds,dx=10.0,nmax=None,testPercent=1.0,classBalanc
         #for point data, create a boolean grid located on xvar/yvar
         #create a donut around each pixel containing a yes point(s), where 1 is assigned to
         #pixels more than h1 meters from yes point and less than h2 meters from yes point.
-        nosampleimg = getNoSampleGrid(yespoints,xvar,yvar,dx,h1,h2)
+        nosampleimg = getNoSampleGrid(yespoints,xvar,yvar,dx,h1,h2,nodatagrid,proj)
+        #spatially union our no sample image with our nangrid 
+        
+        
         NoTestPoints,nosampleimg,sampleidx = sampleNoPoints(nosampleimg,NnoSampTest,xvar,yvar)
         NoTrainPoints,nosampleimg,sampleidx = sampleNoPoints(nosampleimg,NnoSampTrain,xvar,yvar)
     else:
         if extent is None: #we're using the default bounding box of the coverage data
-            NoTestPoints,nosampleidx = sampleNo(xvar,yvar,NnoSampTest,yesidx)
-            NoTrainPoints,nosampleidx = sampleNo(xvar,yvar,NnoSampTrain,nosampleidx)
+            NoTestPoints,nosampleidx = sampleNo(xvar,yvar,NnoSampTest,yesidx,nodatagrid,proj)
+            NoTrainPoints,nosampleidx = sampleNo(xvar,yvar,NnoSampTrain,nosampleidx,nodatagrid,proj)
         else:
             raise Exception('Custom extents not yet supported')  
 
@@ -526,7 +578,7 @@ def pointsFromShapes(shapes, bounds, dx=10.0, nmax=None, Nsamp=None):
     nopoints = np.array(nopoints)
 
     # Only accept points inside the bounds
-    bbPath = mplPath.Path((zip(*np.array(bbPolyproj.exterior.coords.xy))))
+    bbPath = mplPath.Path((list(zip(*np.array(bbPolyproj.exterior.coords.xy)))))
     yespoints = yespoints[bbPath.contains_points(yespoints)]
     nopoints = nopoints[bbPath.contains_points(nopoints)]
     totalpoints = (len(nopoints) + len(yespoints))
@@ -540,7 +592,7 @@ def pointsFromShapes(shapes, bounds, dx=10.0, nmax=None, Nsamp=None):
         nopoints = nopoints[indn, :]
 
     elif totalpoints < Nsamp:
-        print('Only collected %1.0f points out of desired %1.0f points due to bound restrictions' % (totalpoints, Nsamp))
+        print(('Only collected %1.0f points out of desired %1.0f points due to bound restrictions' % (totalpoints, Nsamp)))
 
     #project all of the point data sets back to lat/lon
     yespoints = projectBack(yespoints, proj)
@@ -567,17 +619,22 @@ def sampleNoPoints(sampleimg,N,xvar,yvar):
     #get N points from sampleimg without replacement
     #avoid nosampleidx indices
     #return an sequence of X,Y tuples from those indices
-    npixels = len(xvar)*len(yvar)
-    allidx = np.arange(0,npixels)
-    sampleimg = sampleimg.flatten() #flatten out the input image
-    sampleidx = np.random.choice(allidx[sampleimg==1],size=N,replace=False)
-    sampleidx.sort()
-    sampleimg[sampleidx] = 0
-    sampleimg.shape = (len(yvar),len(xvar))
-    sampley,samplex = np.unravel_index(sampleidx,sampleimg.shape)
-    xp = xvar[samplex]
-    yp = yvar[sampley]
-    nopoints = zip(xp,yp)
+    if N > 0 and np.any(sampleimg == 1):
+        npixels = len(xvar)*len(yvar)
+        allidx = np.arange(0,npixels)
+        sampleimg = sampleimg.flatten() #flatten out the input image
+        sampleidx = np.random.choice(allidx[sampleimg==1],size=N,replace=False)
+        sampleidx.sort()
+        sampleimg[sampleidx] = 0
+        sampleimg.shape = (len(yvar),len(xvar))
+        sampley,samplex = np.unravel_index(sampleidx,sampleimg.shape)
+        xp = xvar[samplex]
+        yp = yvar[sampley]
+
+        nopoints = list(zip(xp,yp))
+    else:
+        nopoints = np.zeros((0,2))
+        sampleidx = np.array([])
     return (nopoints,sampleimg,sampleidx)
     
     
@@ -592,6 +649,8 @@ def projectBack(points,proj):
     :returns:
       2D numpy array of Lon/Lat coordinates.
     """
+    if not len(points):
+        return np.zeros((0,2))
     mpoints = MultiPoint(points)
     project = partial(
         pyproj.transform,
@@ -623,18 +682,18 @@ def plotPoints(shapes,YesTestPoints,YesTrainPoints,NoTestPoints,NoTrainPoints,fi
     figure = plt.figure(figsize=(8,8))
     plt.hold(True)
     for shape in shapes:
-        px,py = zip(*shape['geometry']['coordinates'])
+        px,py = list(zip(*shape['geometry']['coordinates']))
         px = list(px)
         py = list(py)
         px.append(px[0])
         py.append(py[0])
         plt.plot(px,py,'b')
-    yestestx,yestesty = zip(*YesTestPoints)
-    yestrainx,yestrainy = zip(*YesTrainPoints)
+    yestestx,yestesty = list(zip(*YesTestPoints))
+    yestrainx,yestrainy = list(zip(*YesTrainPoints))
     plt.plot(yestestx,yestesty,'r.')
     plt.plot(yestrainx,yestrainy,'g.')
-    notestx,notesty = zip(*NoTestPoints)
-    notrainx,notrainy = zip(*NoTrainPoints)
+    notestx,notesty = list(zip(*NoTestPoints))
+    notrainx,notrainy = list(zip(*NoTrainPoints))
     plt.plot(notestx,notesty,'cx')
     plt.plot(notrainx,notrainy,'mx')
     plt.legend(['Polygon 1 boundaries','Polygon 2 boundaries','Yes Test','Yes Train','No Test','No Train'],numpoints=1)
@@ -735,6 +794,88 @@ def sampleShapes(shapes,xypoints,attribute):
                 samples.append(sample)
     return np.array(samples)
 
+def getGridType(gridfile):
+    gridtype = None
+    try:
+        fdict = GMTGrid.getFileGeoDict(gridfile)
+        gridtype = 'gmt'
+    except Exception as error:
+        try:
+            fdict = GDALGrid.getFileGeoDict(gridfile)
+            gridtype = 'esri'
+        except:
+            pass
+    return gridtype
+
+def getFileGeoDict(filename,gridtype):
+    if gridtype == 'gmt':
+        fgeodict,tmp = GMTGrid.getFileGeoDict(filename)
+    else:
+        fgeodict,tmp = GDALGrid.getFileGeoDict(filename)
+    return fgeodict
+
+def getNoDataGrid(predictors,xmin,xmax,ymin,ymax):
+    txmin = xmin
+    txmax = xmax
+    tymin = ymin
+    tymax = ymax
+    mindx = 9999999999
+    mindy = 9999999999
+    #figure out bounds enclosing all files
+    for predname,predfile in predictors.items():
+        if not os.path.isfile(predfile):
+            continue
+        ftype = getFileType(predfile)
+        if ftype == 'shapefile':
+            f = fiona.open(predfile,'r')
+            bxmin,bymin,bxmax,bymax = f.bounds
+            f.close()
+            if bxmin < txmin:
+                txmin = bxmin
+            if bxmax > txmax:
+                txmax = bxmax
+            if bymin < tymin:
+                tymin = bymin
+            if bymax > tymax:
+                tymax = bymax
+        elif ftype == 'grid':
+            gridtype = getGridType(predfile)
+            if gridtype is None:
+                raise Exception('File "%s" does not appear to be either a GMT grid or an ESRI grid.' % gridfile)
+            fdict = getFileGeoDict(predfile,gridtype)
+            if fdict.dx < mindx:
+                mindx = fdict.dx
+            if fdict.dy < mindy:
+                mindy = fdict.dy
+            if fdict.xmin < txmin:
+                txmin = fdict.xmin
+            if fdict.xmax > txmax:
+                txmax = txmax
+            if fdict.ymin < tymin:
+                tymin = tymin
+            if fdict.ymax > tymax:
+                tymax = tymax
+    sdict = GeoDict.createDictFromBox(txmin,txmax,tymin,tymax,mindx,mindy)
+    nanarray = np.zeros((sdict.ny,sdict.nx),dtype=np.int8)
+    for predname,predfile in predictors.items():
+        if not os.path.isfile(predfile):
+            continue
+        ftype = getFileType(predfile)
+        if ftype == 'shapefile':
+            shapes = list(fiona.open(predfile,'r'))
+            grid = Grid2D.rasterizeFromGeometry(shapes,sdict)
+        else:
+            gridtype = getGridType(predfile)
+            if gridtype == 'gmt':
+                grid = GMTGrid.load(predfile,samplegeodict=sdict,resample=True,method='nearest',doPadding=True)
+            else:
+                grid = GDALGrid.load(predfile,samplegeodict=sdict,resample=True,method='nearest',doPadding=True)
+        nangrid = np.isnan(grid.getData())
+        nanarray = nanarray | nangrid
+    nangrid = Grid2D(data=nanarray,geodict=sdict)
+    return nangrid
+    
+
 def sampleGridFile(gridfile,xypoints,method='nearest'):
     """
     Sample grid file (ESRI or GMT format) at each of a set of XY (decimal degrees) points.
@@ -747,17 +888,19 @@ def sampleGridFile(gridfile,xypoints,method='nearest'):
     :returns:
       1D numpy array of grid values at each of input XY points.
     """
+    if not len(xypoints):
+        return np.array([])
     xmin = np.min(xypoints[:,0])
     xmax = np.max(xypoints[:,0])
     ymin = np.min(xypoints[:,1])
     ymax = np.max(xypoints[:,1])
     gridtype = None
     try:
-        fdict = GMTGrid.getFileGeoDict(gridfile)
+        fdict,tmp = GMTGrid.getFileGeoDict(gridfile)
         gridtype = 'gmt'
-    except Exception,error:
+    except Exception as error:
         try:
-            fdict = GDALGrid.getFileGeoDict(gridfile)
+            fdict,tmp = GDALGrid.getFileGeoDict(gridfile)
             gridtype = 'esri'
         except:
             pass
@@ -769,15 +912,15 @@ def sampleGridFile(gridfile,xypoints,method='nearest'):
     ymax = ymax + fdict.dy*3
     bounds = (xmin,xmax,ymin,ymax)
     if gridtype == 'gmt':
-        fgeodict = GMTGrid.getFileGeoDict(gridfile)
+        fgeodict,tmp = GMTGrid.getFileGeoDict(gridfile)
     else:
-        fgeodict = GDALGrid.getFileGeoDict(gridfile)
+        fgeodict,tmp = GDALGrid.getFileGeoDict(gridfile)
     dx,dy = (fgeodict.dx,fgeodict.dy)
     sdict = GeoDict.createDictFromBox(xmin,xmax,ymin,ymax,dx,dy)
     if gridtype == 'gmt':
-        grid = GMTGrid.load(gridfile,samplegeodict=sdict,resample=False,method=method,doPadding=True)
+        grid = GMTGrid.load(gridfile,samplegeodict=sdict,resample=True,method=method,doPadding=True)
     else:
-        grid = GDALGrid.load(gridfile,samplegeodict=sdict,resample=False,method=method,doPadding=True)
+        grid = GDALGrid.load(gridfile,samplegeodict=sdict,resample=True,method=method,doPadding=True)
 
     return sampleFromGrid(grid,xypoints)
 
@@ -873,7 +1016,7 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
     h1 = sampleparams['h1']
     h2 = sampleparams['h2']
 
-    yestest,yestrain,notest,notrain,xvar,yvar,pshapes,proj = sampleFromFile(coverage,dx=dx,nmax=nmax,testPercent=testpercent,
+    yestest,yestrain,notest,notrain,xvar,yvar,pshapes,proj = sampleFromFile(coverage,predictors,dx=dx,nmax=nmax,testPercent=testpercent,
                                                                             touch_center=touch_center,classBalance=cb,extent=extent,
                                                                             Nsamp=nsamp,h1=h1,h2=h2)
 
@@ -891,7 +1034,9 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
         testcolumns['coverage'] = np.concatenate((np.ones_like(yestest[:,1]),np.zeros_like(notest[:,1])))
     
     
-    for predname,predfile in predictors.iteritems():
+    for predname,predfile in predictors.items():
+        if not os.path.isfile(predfile):
+            continue
         ftype = getFileType(predfile)
         if ftype == 'shapefile':
             attribute = predictors[predname+'_attribute']
@@ -904,7 +1049,7 @@ def getDataFrames(sampleparams,shakeparams,predictors,outparams):
             traincolumns[predname] = np.squeeze(np.concatenate((yes_train_samples,no_train_samples)))
         elif ftype == 'grid':
             method = 'nearest'
-            if predictors.has_key(predname+'_sampling'):
+            if predname+'_sampling' in predictors:
                 method = predictors[predname+'_sampling']
 
             if testpercent > 0:
@@ -943,7 +1088,7 @@ def test_sampleArray():
     #get 5 random non-replacement
     allrows = np.arange(0,10)
     sampleidx = np.random.choice(allrows,size=5,replace=False)
-    print sampleidx
+    print(sampleidx)
 
 def _test_sample():
     shapes = []
