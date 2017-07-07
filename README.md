@@ -20,7 +20,7 @@ Do the following (If you already have Anaconda or Miniconda installed, skip step
   1. git clone https://github.com/mhearne-usgs/lsprocess
   2. curl -O https://repo.continuum.io/miniconda/Miniconda2-latest-MacOSX-x86_64.sh
   3. sh Miniconda2-latest-MacOSX-x86_64.sh
-  4. cd losspager
+  4. cd lsprocess
   6. source deactivate #this turns off any current virtual environments you may have configured
   5. ./setup_env.sh
   6. source activate pysample
