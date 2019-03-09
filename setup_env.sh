@@ -37,4 +37,4 @@ conda activate $VENV
 #rm mapio.zip
 
 #tell the user they have to activate this environment
-echo "Type 'source activate ${VENV}' to use this new virtual environment."
+echo "Type 'conda activate ${VENV}' to use this new virtual environment."
