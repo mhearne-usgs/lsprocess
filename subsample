@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 
-#stdlib imports
+# stdlib imports
 import configparser
 import sys
 import os.path
 import argparse
 
-#third party imports
-from mapio import shake,grid2d,gmt,gdal,geodict
+# third party imports
+from mapio import shake, grid2d, gmt, gdal, geodict
 import pandas as pd
 import numpy as np
 
@@ -63,80 +63,84 @@ folder = /path/to/output_folder
 ################################
 '''
 
+
 def main(args):
     configfile = args.configfile
     config = configparser.RawConfigParser()
     config.read(configfile)
 
-    shakefile = config.get('SHAKEMAP','file')
-    shakelayers = config.get('SHAKEMAP','layers').split(',')
+    shakefile = config.get('SHAKEMAP', 'file')
+    shakelayers = config.get('SHAKEMAP', 'layers').split(',')
 
     default_interp = 'nearest'
     params = config.options('LAYERS')
 
     layerlist = []
-    
+
     for param in params:
         if param.find('_sample') < 0:
-            pfile = config.get('LAYERS',param)
-            psamplekey = param+'_sample'
+            pfile = config.get('LAYERS', param)
+            psamplekey = param + '_sample'
             if psamplekey in params:
-                psample = config.get('LAYERS',psamplekey)
+                psample = config.get('LAYERS', psamplekey)
             else:
                 psample = default_interp
-            layerlist.append((pfile,psample,param))
+            layerlist.append((pfile, psample, param))
 
-    outfolder = config.get('OUTPUT','folder')
-    eqname = config.get('OUTPUT','earthquake')
+    outfolder = config.get('OUTPUT', 'folder')
+    eqname = config.get('OUTPUT', 'earthquake')
     if not os.path.isdir(outfolder):
         os.mkdir(outfolder)
 
-
-    #see if the user specified any optional bounding box/resolution information
+    # see if the user specified any optional bounding box/resolution information
     sample_shakemap = False
     if 'BOUNDS' in config.sections():
-        xmin = float(config.get('BOUNDS','lonmin'))
-        xmax = float(config.get('BOUNDS','lonmax'))
-        ymin = float(config.get('BOUNDS','latmin'))
-        ymax = float(config.get('BOUNDS','latmax'))
-        xres = float(config.get('BOUNDS','xres'))
-        yres = float(config.get('BOUNDS','yres'))
-        sampledict = geodict.GeoDict.createDictFromBox(xmin,xmax,ymin,ymax,xres,yres)
+        xmin = float(config.get('BOUNDS', 'lonmin'))
+        xmax = float(config.get('BOUNDS', 'lonmax'))
+        ymin = float(config.get('BOUNDS', 'latmin'))
+        ymax = float(config.get('BOUNDS', 'latmax'))
+        xres = float(config.get('BOUNDS', 'xres'))
+        yres = float(config.get('BOUNDS', 'yres'))
+        sampledict = geodict.GeoDict.createDictFromBox(
+            xmin, xmax, ymin, ymax, xres, yres)
         sample_shakemap = True
     else:
-        sampledict = ShakeGrid.getFileGeoDict(shakefile)
+        sampledict = shake.ShakeGrid.getFileGeoDict(shakefile)
 
     if args.table:
         ddict = {}
-        
-    #load the ShakeMap and save the desired layers to GMT files
+
+    # load the ShakeMap and save the desired layers to GMT files
     if sample_shakemap:
         shakedict = shake.ShakeGrid.getFileGeoDict(shakefile)
         latcheck = sampledict.ymin < shakedict.ymin or sampledict.ymax > shakedict.ymax
         loncheck = sampledict.xmin < shakedict.xmin or sampledict.xmax > shakedict.xmax
         if latcheck or loncheck:
             print('Padding ShakeMap with NaN values...')
-        shakegrid = shake.ShakeGrid.load(shakefile,adjust='res',resample=True,samplegeodict=sampledict,doPadding=True)
+        shakegrid = shake.ShakeGrid.load(
+            shakefile, adjust='res', resample=True, samplegeodict=sampledict, doPadding=True)
     else:
-        shakegrid = shake.ShakeGrid.load(shakefile,adjust='res')
+        shakegrid = shake.ShakeGrid.load(shakefile, adjust='res')
     for layer in shakelayers:
         grid2d = shakegrid.getLayer(layer)
         if args.table:
             ddict[layer] = grid2d.getData().flatten()
         gmtgrid = gmt.GMTGrid.copyFromGrid(grid2d)
-        layerfile = os.path.join(outfolder,eqname+'_'+layer+'.grd')
+        layerfile = os.path.join(outfolder, eqname + '_' + layer + '.grd')
         print('Saving %s...' % layerfile)
         gmtgrid.save(layerfile)
 
     layers = []
-    for layerfile,layersample,layername in layerlist:
+    for layerfile, layersample, layername in layerlist:
         if gmt.GMTGrid.getFileType(layerfile) != 'unknown':
-            grid = gmt.GMTGrid.load(layerfile,samplegeodict=sampledict,resample=True,method=layersample,doPadding=True)
+            grid = gmt.GMTGrid.load(
+                layerfile, samplegeodict=sampledict, resample=True, method=layersample, doPadding=True)
         else:
-            grid = gdal.GDALGrid.load(layerfile,samplegeodict=sampledict,resample=True,method=layersample,doPadding=True)
+            grid = gdal.GDALGrid.load(
+                layerfile, samplegeodict=sampledict, resample=True, method=layersample, doPadding=True)
         if args.table:
             ddict[layername] = grid.getData().flatten()
-        gridfile = os.path.join(outfolder,eqname+'_'+layername+'.grd')
+        gridfile = os.path.join(outfolder, eqname + '_' + layername + '.grd')
         gmtgrid = gmt.GMTGrid.copyFromGrid(grid)
         print('Saving %s...' % gridfile)
         gmtgrid.save(gridfile)
@@ -146,29 +150,27 @@ def main(args):
         layers = shakelayers + layers
         nrows = sampledict.ny
         ncols = sampledict.nx
-        rows = np.reshape(np.arange(0,nrows),(nrows,1))
-        cols = np.reshape(np.arange(0,ncols),(1,ncols))
-        rows = np.tile(rows,(1,ncols))
-        cols = np.tile(cols,(nrows,1))
-        lat,lon = sampledict.getLatLon(rows,cols)
+        rows = np.reshape(np.arange(0, nrows), (nrows, 1))
+        cols = np.reshape(np.arange(0, ncols), (1, ncols))
+        rows = np.tile(rows, (1, ncols))
+        cols = np.tile(cols, (nrows, 1))
+        lat, lon = sampledict.getLatLon(rows, cols)
         ddict['lat'] = lat.flatten()
         ddict['lon'] = lon.flatten()
         df = pd.DataFrame(ddict)
-        cols = ['lat','lon']+layers
+        cols = ['lat', 'lon'] + layers
         df = df[cols]
-        tablefile = os.path.join(outfolder,args.table)
+        tablefile = os.path.join(outfolder, args.table)
         print('Writing data table to %s...' % tablefile)
         df.to_csv(tablefile)
     print('Done')
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=usage)
-    parser.add_argument('configfile', 
-                    help='Config file as described in help')
-    parser.add_argument('-t','--table', metavar='TABLE',
+    parser.add_argument('configfile',
+                        help='Config file as described in help')
+    parser.add_argument('-t', '--table', metavar='TABLE',
                         help='Save results as table in TABLE (in configured output folder).')
     pargs = parser.parse_args()
     main(pargs)
-    
-                        
-    
