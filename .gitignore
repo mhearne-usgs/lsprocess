@@ -1,2 +1,13 @@
 *.pyc
-*.ini
+build
+*~
+.DS_Store
+.ipynb_checkpoints/
+.cache
+.coverage
+.coverage.xml
+htmlcov
+*.egg-info/
+.pytest_cache
+
+
