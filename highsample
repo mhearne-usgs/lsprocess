@@ -1,0 +1,185 @@
+#!/usr/bin/env python
+
+# stdlib imports
+import os.path
+import argparse
+import configparser
+
+# third party imports
+import matplotlib.pyplot as plt
+import rasterio
+import numpy as np
+
+# neic imports
+from mapio.grid2d import Grid2D
+from mapio.shake import ShakeGrid
+from mapio.geodict import GeoDict
+from mapio.reader import read, _get_geodict_from_src
+from mapio.writer import write
+
+usage = '''Subsample grids and a ShakeMap based on one or more high-resolution grids.  
+This program has one argument, the path to a config file in the format below.
+
+The [SHAKEMAP] section allows you to specify the file name and desired
+output layers from the shakemap.
+
+The (optional) [BOUNDS] section allows you to override the default 
+bounds/resolution selected from the shakemap.  If these bounds exceed those of the
+shakemap in any direction, the ShakeMap (and any other layers) will be
+padded with NaN values in that direction.
+
+The [BASEFILES] section allows you to specify the global high resolution
+files that should be cut but NOT resampled to the desired bounds. ALL other
+files will be resampled to the resolution and cell boundaries of these files.
+These files must all have the same resolution and extent.
+
+The [SAMPLEFILES] section is where to specify the remaining grid files 
+(presumably at a lower resolution) that should be resampled to the BASEFILES 
+resolution. The layername_sample options allow you to specify the type of
+resampling that should be applied to each layer, one of nearest or
+linear (the default is nearest).
+The [OUTPUT] section allows you to specify the folder where the output
+GMT Netcdf format grids will be written, and the earthquake name that
+will appear in each file name.
+For example, a layer called "elev" for the earthquake called
+"northridge" would be given the name "northridge_elev.grd".
+Config Format:
+################################
+[SHAKEMAP]
+file = /path/to/grid.xml
+layers = mmi,pga,pgv 
+[BOUNDS]
+lonmin = 165
+lonmax = 175
+latmin = 32
+latmax = 34
+[BASEFILES]
+topo = /path/to/topo_file
+precip = /path/to/precip_file
+
+[SAMPLEFILES]
+glim = /path/to/glim_file
+glim_sample = nearest
+
+[OUTPUT]
+earthquake = northridge
+folder = /path/to/output_folder
+################################
+'''
+
+
+def get_file_geodict(filename):
+    with rasterio.open(filename) as src:
+        gd = _get_geodict_from_src(src)
+        return gd
+    return None
+
+
+def main():
+    formatter = argparse.RawDescriptionHelpFormatter
+    parser = argparse.ArgumentParser(description=usage,
+                                     formatter_class=formatter)
+    parser.add_argument('configfile',
+                        help='Config file as described in help')
+    parser.add_argument('-t', '--table', metavar='TABLE',
+                        help='Save results as table in TABLE (in configured output folder).')
+    args = parser.parse_args()
+
+    configfile = args.configfile
+    config = configparser.RawConfigParser()
+    config.read(configfile)
+
+    shakefile = config.get('SHAKEMAP', 'file')
+    shakelayers = config.get('SHAKEMAP', 'layers').split(',')
+
+    default_interp = 'nearest'
+    samples = config.options('SAMPLEFILES')
+
+    # get the list of base files with names
+    basenames = config.options('BASEFILES')
+    basefiles = {}
+    for basename in basenames:
+        basefiles[basename] = config.get('BASEFILES', basename)
+
+    layerlist = []
+    for param in samples:
+        if param.find('_sample') < 0:
+            pfile = config.get('SAMPLEFILES', param)
+            psamplekey = param + '_sample'
+            if psamplekey in samples:
+                psample = config.get('SAMPLEFILES', psamplekey)
+            else:
+                psample = default_interp
+            layerlist.append((pfile, psample, param))
+
+    outfolder = config.get('OUTPUT', 'folder')
+    eqname = config.get('OUTPUT', 'earthquake')
+    if not os.path.isdir(outfolder):
+        os.mkdir(outfolder)
+
+    # see if the user specified any optional bounding box/resolution information
+    if 'BOUNDS' in config.sections():
+        xmin = float(config.get('BOUNDS', 'lonmin'))
+        xmax = float(config.get('BOUNDS', 'lonmax'))
+        ymin = float(config.get('BOUNDS', 'latmin'))
+        ymax = float(config.get('BOUNDS', 'latmax'))
+    else:
+        shakedict = ShakeGrid.getFileGeoDict(shakefile)
+        xmin = shakedict.xmin + shakedict.dx * 2
+        xmax = shakedict.xmax - shakedict.dx * 2
+        ymin = shakedict.ymin + shakedict.dy * 2
+        ymax = shakedict.ymax - shakedict.dy * 2
+
+    # get the geodict describing the basefiles
+    basedict = get_file_geodict(basefiles[basenames[0]])
+    dx = basedict.dx
+    dy = basedict.dx
+
+    tsampledict = GeoDict.createDictFromBox(xmin, xmax, ymin, ymax, dx, dy)
+
+    outfiles = []
+
+    # now use this sampling geodict to read in base files without resampling.
+    for basename, basefile in basefiles.items():
+        basegrid = read(basefile,
+                        samplegeodict=tsampledict,
+                        resample=False, doPadding=True,
+                        padValue=np.nan)
+        outfile = os.path.join(outfolder, '%s_%s.flt' % (eqname, basename))
+        write(basegrid, outfile, 'esri')
+        outfiles.append(outfile)
+
+    # now use the geodict from the basefile as the actual sampling dictionary
+    sampledict = basegrid.getGeoDict()
+
+    # now resample the other lower resolution grids
+    for lfile, lsample, lname in layerlist:
+        lgrid = read(lfile,
+                     samplegeodict=sampledict,
+                     resample=True,
+                     method=lsample,
+                     doPadding=True, padValue=np.nan)
+        outfile = os.path.join(outfolder, '%s_%s.flt' % (eqname, lname))
+        write(lgrid, outfile, 'esri')
+        outfiles.append(outfile)
+
+    # now read and resample the ShakeMap layers
+    shakegrid = ShakeGrid.load(shakefile,
+                               samplegeodict=sampledict,
+                               resample=True,
+                               doPadding=True,
+                               padValue=np.nan,
+                               method='linear')
+    for slayer in shakelayers:
+        imtgrid = shakegrid.getLayer(slayer)
+        outfile = os.path.join(outfolder, '%s_%s.flt' % (eqname, slayer))
+        write(imtgrid, outfile, 'esri')
+        outfiles.append(outfile)
+
+    print('%i files written to %s.' % (len(outfiles), outfolder))
+    for outfile in outfiles:
+        print('%s' % outfile)
+
+
+if __name__ == "__main__":
+    main()

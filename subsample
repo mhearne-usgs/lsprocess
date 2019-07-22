@@ -167,7 +167,9 @@ def main(args):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=usage)
+    formatter = argparse.RawDescriptionHelpFormatter
+    parser = argparse.ArgumentParser(description=usage,
+                                     formatter_class=formatter)
     parser.add_argument('configfile',
                         help='Config file as described in help')
     parser.add_argument('-t', '--table', metavar='TABLE',
